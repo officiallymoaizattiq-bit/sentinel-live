@@ -16,7 +16,7 @@ class StubLLM:
         self.response = response
         self.calls = 0
 
-    async def score(self, *, transcript, features, drift, history, rubric) -> Score:
+    async def score(self, *, transcript, features, drift, history, rubric, vitals) -> Score:
         self.calls += 1
         return self.response
 

@@ -11,6 +11,7 @@ import {
   scoreToSeverity,
   type Severity,
 } from "@/lib/format";
+import { VitalsPanel } from "@/components/VitalsPanel";
 
 export const revalidate = 0;
 
@@ -120,6 +121,11 @@ export default async function PatientDetail({
         </div>
         <TrajectoryChart points={points} />
       </Glass>
+
+      <section>
+        <h3 className="mb-2 text-sm text-slate-400">Wearable vitals (24h)</h3>
+        <VitalsPanel patientId={params.id} />
+      </section>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-3">

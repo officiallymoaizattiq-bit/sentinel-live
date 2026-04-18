@@ -27,8 +27,56 @@ or separation, severe abdominal distension, inability to keep fluids, reduced ur
 You MUST call emit_score(...) exactly once."""
 
 
+async def _summarize_recent_vitals(
+    *, patient_id: str, window_hours: int = 2
+) -> dict:
+    """Summarize the patient's last N hours of wearable vitals for LLM context.
+
+    Returns a compact dict suitable for JSON-embedding into the Gemini prompt
+    and for persistence on the call doc.
+    """
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=window_hours)
+    cur = (
+        get_db()
+        .vitals.find({"patient_id": patient_id, "t": {"$gte": cutoff}})
+        .sort("t", 1)
+    )
+    buckets: dict[str, list[float]] = {}
+    latest: dict[str, tuple[str, float | str]] = {}
+    count = 0
+    async for d in cur:
+        count += 1
+        kind = d["kind"]
+        val = d["value"]
+        latest[kind] = (d["t"].isoformat() if hasattr(d["t"], "isoformat") else str(d["t"]), val)
+        if isinstance(val, (int, float)):
+            buckets.setdefault(kind, []).append(float(val))
+
+    def agg(vals: list[float]) -> dict:
+        if not vals:
+            return {}
+        s = sorted(vals)
+        return {
+            "n": len(vals),
+            "min": s[0],
+            "max": s[-1],
+            "mean": sum(vals) / len(vals),
+            "median": s[len(s) // 2],
+        }
+
+    summary: dict = {
+        "window_hours": window_hours,
+        "sample_count": count,
+        "stats": {k: agg(v) for k, v in buckets.items()},
+        "latest": {k: {"t": t, "value": v} for k, (t, v) in latest.items()},
+    }
+    return summary
+
+
 class LLM(Protocol):
-    async def score(self, *, transcript, features, drift, history, rubric) -> Score: ...
+    async def score(self, *, transcript, features, drift, history, rubric,
+                    vitals) -> Score: ...
     async def embed(self, text: str) -> list[float]: ...
 
 
@@ -65,12 +113,13 @@ class GeminiLLM:
         )
         self._embed_model = "text-embedding-004"
 
-    async def score(self, *, transcript, features, drift, history, rubric) -> Score:
+    async def score(self, *, transcript, features, drift, history, rubric, vitals) -> Score:
         user = json.dumps({
             "transcript": [t.model_dump() for t in transcript],
             "features": features.model_dump(),
             "drift_z": drift,
             "history_last_3_calls": history,
+            "vitals_last_2h": vitals,
         })
         resp = await self._model.generate_content_async(user)
         for part in resp.candidates[0].content.parts:
@@ -143,11 +192,13 @@ async def score_call(
     llm: LLM,
 ) -> str:
     history = await _last_3_calls(patient_id)
+    vitals_summary = await _summarize_recent_vitals(patient_id=patient_id)
     llm_degraded = False
     try:
         score = await llm.score(
             transcript=transcript, features=features, drift=drift,
             history=history, rubric=RUBRIC,
+            vitals=vitals_summary,
         )
     except Exception:
         score = rules_only_score(features=features, drift=drift)
@@ -177,5 +228,6 @@ async def score_call(
         "llm_degraded": llm_degraded,
         "audio_degraded": False,
         "short_call": len(transcript) < 3,
+        "vitals_summary": vitals_summary,
     })
     return call_id

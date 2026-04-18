@@ -43,8 +43,23 @@ function resolve(path: string): string {
   return `${base}${path}`;
 }
 
+function isServer() {
+  return typeof window === "undefined";
+}
+
+function resolve(path: string): string {
+  if (!isServer()) return path;
+  const base = process.env.BACKEND_URL ?? "http://localhost:8000";
+  return `${base}${path}`;
+}
+
+const BASE =
+  typeof window === "undefined"
+    ? process.env.BACKEND_URL ?? "http://localhost:8000"
+    : "";
+
 async function j<T>(path: string): Promise<T> {
-  const r = await fetch(resolve(path), { cache: "no-store" });
+  const r = await fetch(resolve(`${BASE}${path)}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`${r.status} ${path}`);
   return r.json();
 }

@@ -31,7 +31,11 @@ def decide_actions(*, score: Score) -> ActionBundle:
 
 def _sms_send(to: str, body: str) -> None:
     s = get_settings()
-    if not s.twilio_account_sid or s.demo_mode and not to.startswith("+"):
+    if (
+        not s.twilio_account_sid
+        or not s.twilio_from_number
+        or (s.demo_mode and not to.startswith("+1"))
+    ):
         print(f"[DEMO SMS] to={to} body={body}")
         return
     client = TwilioClient(s.twilio_account_sid, s.twilio_auth_token)

@@ -7,3 +7,7 @@ node_modules/
 .next/
 dist/
 *.wav.tmp
+
+# Build artifacts
+*.egg-info/
+.pytest_cache/
