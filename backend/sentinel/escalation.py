@@ -78,3 +78,12 @@ async def send_alert(*, patient_id: str, call_id: str, score: Score) -> None:
         "acknowledged_by": None,
         "ack_at": None,
     })
+    from sentinel import events as event_bus
+    event_bus.publish({
+        "type": "alert",
+        "patient_id": patient_id,
+        "call_id": call_id,
+        "severity": score.recommended_action.value,
+        "summary": score.summary,
+        "at": datetime.now(tz=timezone.utc).isoformat(),
+    })

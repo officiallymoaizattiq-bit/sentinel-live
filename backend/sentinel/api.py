@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Form, Header, HTTPException, Path, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic import BaseModel as _PM
 from twilio.twiml.voice_response import VoiceResponse as TwilioVoiceResponse
 
 from sentinel import enrollment
+from sentinel import events as event_bus
 from sentinel import pairing as pairing_mod
 from sentinel import vitals as vitals_mod
 from sentinel.auth import require_device_token
@@ -136,8 +138,8 @@ from sentinel.demo_runner import run_trajectory_demo
 
 @router.post("/demo/run")
 async def demo_run():
-    pid = await run_trajectory_demo()
-    return {"patient_id": pid}
+    pids = await run_trajectory_demo()
+    return {"patient_ids": pids}
 
 
 from pydantic import BaseModel as _BM
@@ -149,13 +151,28 @@ class TriggerCallBody(_BM):
 
 @router.post("/calls/trigger")
 async def trigger_call(body: TriggerCallBody):
-    """On-demand: dial a patient now. Used for live-call demo and testing."""
+    """Admin 'Call Now': dial the patient (native EL+Twilio) OR if Twilio isn't
+    configured, emit a `pending_call` event so the patient's browser tab can
+    auto-start the Convai widget.
+    """
     from sentinel.call_handler import place_call
+    from sentinel.config import get_settings
+
+    s = get_settings()
+    has_twilio = bool(s.twilio_account_sid.startswith("AC")) and bool(s.twilio_from_number)
+
+    event_bus.publish({
+        "type": "pending_call",
+        "patient_id": body.patient_id,
+        "mode": "phone" if has_twilio else "widget",
+        "at": datetime.now(tz=timezone.utc).isoformat(),
+    })
+
     try:
         call_id = await place_call(body.patient_id)
     except LookupError:
         raise HTTPException(404, "patient not found")
-    return {"call_id": call_id}
+    return {"call_id": call_id, "mode": "phone" if has_twilio else "widget"}
 
 
 class FinalizeBody(_BM):
@@ -252,3 +269,29 @@ async def patient_vitals(pid: str, hours: int = 2):
         }
         async for d in cur
     ]
+
+
+@router.get("/stream")
+async def stream_events():
+    q = event_bus.subscribe()
+    return StreamingResponse(
+        event_bus.stream(q),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/stream/stats")
+async def stream_stats():
+    return {"subscribers": event_bus.snapshot_subs()}
+
+
+@router.post("/demo/seed-named")
+async def seed_named_route(clean: bool = True):
+    from sentinel.named_seed import seed_named_patients
+    pids = await seed_named_patients(clean=clean)
+    return {"patient_ids": pids}

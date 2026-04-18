@@ -172,6 +172,15 @@ async def ingest_batch(
         "flagged_clock_skew": flagged,
     })
 
+    from sentinel import events as event_bus
+    event_bus.publish({
+        "type": "vitals",
+        "patient_id": patient_id,
+        "device_id": device_id,
+        "accepted": len(cleaned),
+        "at": datetime.now(tz=timezone.utc).isoformat(),
+    })
+
     return {
         "accepted": len(cleaned),
         "flagged_clock_skew": flagged,

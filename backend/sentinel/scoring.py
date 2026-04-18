@@ -230,4 +230,12 @@ async def score_call(
         "short_call": len(transcript) < 3,
         "vitals_summary": vitals_summary,
     })
+    from sentinel import events as event_bus
+    event_bus.publish({
+        "type": "call_scored",
+        "call_id": call_id,
+        "patient_id": patient_id,
+        "score": score.model_dump(mode="json") if hasattr(score, "model_dump") else score,
+        "at": datetime.now(tz=timezone.utc).isoformat(),
+    })
     return call_id
