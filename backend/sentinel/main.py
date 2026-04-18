@@ -8,6 +8,7 @@ from sentinel.api import router
 from sentinel.db import close_db, ensure_indexes
 from sentinel.scheduler import start as scheduler_start
 from sentinel.scheduler import stop as scheduler_stop
+from sentinel.web_auth import router as auth_router
 
 
 def create_app(*, start_scheduler: bool = True) -> FastAPI:
@@ -26,6 +27,7 @@ def create_app(*, start_scheduler: bool = True) -> FastAPI:
 
     app = FastAPI(title="Sentinel", lifespan=lifespan)
     app.include_router(router)
+    app.include_router(auth_router)
     return app
 
 

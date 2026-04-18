@@ -124,8 +124,15 @@ async def place_call(patient_id: str) -> str:
     return call_id
 
 
-async def finalize_call(*, conversation_id: str) -> str | None:
-    """Pull transcript + audio from EL post-call, run scoring, persist."""
+async def finalize_call(
+    *, conversation_id: str, patient_id_fallback: str | None = None,
+) -> str | None:
+    """Pull transcript + audio from EL post-call, run scoring, persist.
+
+    If a prior `calls` doc with this `conversation_id` exists (backend-initiated
+    outbound call), update it. Otherwise create a new doc using
+    `patient_id_fallback` (widget-initiated browser call path).
+    """
     from sentinel.audio_features import extract_features, zscore_drift
     from sentinel.models import AudioFeatures, TranscriptTurn
     from sentinel.scoring import GeminiLLM, score_call
@@ -133,8 +140,20 @@ async def finalize_call(*, conversation_id: str) -> str | None:
     db = get_db()
     call_doc = await db.calls.find_one({"conversation_id": conversation_id})
     if call_doc is None:
-        log.warning("finalize_call: no call found for conversation %s", conversation_id)
-        return None
+        pid = patient_id_fallback
+        if pid is None:
+            log.warning("finalize_call: no prior doc + no patient_id fallback for %s",
+                        conversation_id)
+            return None
+        call_doc = {
+            "_id": str(uuid4()),
+            "patient_id": pid,
+            "called_at": datetime.now(tz=timezone.utc),
+            "conversation_id": conversation_id,
+            "status": "in_progress",
+            "audio_features": {},
+        }
+        await db.calls.insert_one(call_doc)
 
     s = get_settings()
     from elevenlabs.client import ElevenLabs
