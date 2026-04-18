@@ -5,7 +5,7 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/patients
-    plan: starter
+    plan: free
     envVars:
       - key: MONGO_URI
         sync: false
@@ -29,6 +29,12 @@ services:
         sync: false
       - key: DEVICE_TOKEN_SECRET
         generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PASSKEY
+        sync: false
+      - key: PATIENT_PASSKEY
+        sync: false
       - key: DEMO_MODE
         value: "false"
 
@@ -38,7 +44,12 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     startCommand: npm run start
-    plan: starter
+    plan: free
     envVars:
       - key: BACKEND_URL
+        fromService:
+          type: web
+          name: sentinel-api
+          property: host
+      - key: NEXT_PUBLIC_ELEVENLABS_AGENT_ID
         sync: false
