@@ -32,7 +32,6 @@ export function PatientLiveView({
   const [calls, setCalls] = useState<CallRecord[]>(initialCalls);
   const [incoming, setIncoming] = useState<{ at: string; mode: string } | null>(null);
   const [widgetOpen, setWidgetOpen] = useState(false);
-  const [lastEvent, setLastEvent] = useState<string>("(none yet)");
 
   useEffect(() => {
     if (document.querySelector(`script[src="${WIDGET_SRC}"]`)) return;
@@ -42,10 +41,6 @@ export function PatientLiveView({
   }, []);
 
   const { connected } = useEventStream((e) => {
-    setLastEvent(
-      `${new Date().toLocaleTimeString()} · ${e.type}` +
-      ("patient_id" in e ? ` pid=${e.patient_id.slice(0, 8)} mine=${patientId.slice(0, 8)}` : "")
-    );
     if (e.type === "pending_call" && e.patient_id === patientId) {
       setIncoming({ at: e.at, mode: e.mode });
     }
@@ -77,7 +72,6 @@ export function PatientLiveView({
           </span>
         </div>
         <p className="text-sm text-slate-400">Your recent check-ins</p>
-        <p className="mt-1 font-mono text-[10px] text-slate-500">last: {lastEvent}</p>
       </header>
 
       {incoming && !widgetOpen && (
