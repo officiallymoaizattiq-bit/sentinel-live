@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     call_cadence_hours: int = Field(default=12, ge=1, le=24)
     demo_mode: bool = True
     device_token_secret: str = "dev-only-change-in-prod-NOT-SECURE"
-    admin_passkey: str = "sentinel-admin"
-    patient_passkey: str = "sentinel-patient"
+    admin_passkey: str = "a"
+    patient_passkey: str = "b"
     session_secret: str = "dev-only-session-NOT-SECURE"
 
 

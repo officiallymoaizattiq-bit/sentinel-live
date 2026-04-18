@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type CallRecord, type Patient } from "@/lib/api";
 import { usePolling } from "@/lib/hooks/usePolling";
+import { useEventStream } from "@/lib/hooks/useEventStream";
 import { PatientCard } from "@/components/PatientCard";
 import { CallNowButton } from "@/components/admin/CallNowButton";
 import { Glass } from "@/components/ui/Glass";
@@ -51,6 +52,19 @@ export function PatientGrid({
 
   const [summaries, setSummaries] =
     useState<Record<string, CallSummary>>(initialSummaries);
+
+  // Live refresh: when a call is scored for a patient, refetch that patient's calls.
+  useEventStream((e) => {
+    if (e.type === "call_scored") {
+      const pid = e.patient_id;
+      api
+        .calls(pid)
+        .then((calls) => {
+          setSummaries((prev) => ({ ...prev, [pid]: summarize(calls) }));
+        })
+        .catch(() => void 0);
+    }
+  });
 
   useEffect(() => {
     let alive = true;

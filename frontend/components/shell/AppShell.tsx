@@ -13,9 +13,9 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   {
-    href: "/",
+    href: "/admin",
     label: "Dashboard",
-    match: (p) => p === "/",
+    match: (p) => p === "/admin",
     icon: (
       <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5">
         <path
@@ -26,7 +26,7 @@ const NAV: NavItem[] = [
     ),
   },
   {
-    href: "/?view=patients",
+    href: "/admin?view=patients",
     label: "Patients",
     match: (p) => p.startsWith("/patients"),
     icon: (
@@ -39,7 +39,7 @@ const NAV: NavItem[] = [
     ),
   },
   {
-    href: "/?view=alerts",
+    href: "/admin?view=alerts",
     label: "Alerts",
     match: () => false,
     icon: (
@@ -52,7 +52,7 @@ const NAV: NavItem[] = [
     ),
   },
   {
-    href: "/?view=cohort",
+    href: "/admin?view=cohort",
     label: "Cohort",
     match: () => false,
     icon: (
@@ -92,7 +92,7 @@ function Sidebar() {
   const pathname = usePathname();
   return (
     <aside className="glass sticky top-4 hidden h-[calc(100vh-2rem)] w-60 shrink-0 flex-col rounded-2xl p-4 md:flex">
-      <Link href="/" className="mb-6 flex items-center gap-2.5 px-2">
+      <Link href="/admin" className="mb-6 flex items-center gap-2.5 px-2">
         <div className="relative h-8 w-8">
           <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-accent-300 to-accent-600 shadow-glow" />
           <div className="absolute inset-[3px] rounded-[7px] bg-canvas/80 backdrop-blur-sm" />

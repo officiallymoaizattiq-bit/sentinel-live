@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Glass } from "@/components/ui/Glass";
 import { api, type Alert, type Patient } from "@/lib/api";
 import { usePolling } from "@/lib/hooks/usePolling";
+import { useEventStream } from "@/lib/hooks/useEventStream";
 
 type Tile = {
   label: string;
@@ -77,7 +78,36 @@ export function KpiStrip({
   );
 
   const ps = patients ?? initialPatients ?? [];
-  const as = alerts ?? initialAlerts ?? [];
+  const pollAlerts = alerts ?? initialAlerts ?? [];
+
+  // Live-extend poll-derived alerts with any SSE-pushed alerts in between polls.
+  const [liveAlerts, setLiveAlerts] = useState<Alert[]>([]);
+  useEventStream((e) => {
+    if (e.type === "alert") {
+      setLiveAlerts((prev) => {
+        if (prev.some((a) => a.call_id === e.call_id && a.severity === e.severity)) {
+          return prev;
+        }
+        const next: Alert = {
+          id: `${e.call_id}-${e.severity}-${e.at}`,
+          patient_id: e.patient_id,
+          call_id: e.call_id,
+          severity: e.severity,
+          channel: [],
+          sent_at: e.at,
+        };
+        return [next, ...prev].slice(0, 50);
+      });
+    }
+  });
+  // Merge, deduping on call_id+severity so polling eventually reconciles live-only.
+  const as: Alert[] = (() => {
+    const seen = new Set(pollAlerts.map((a) => `${a.call_id}|${a.severity}`));
+    const extras = liveAlerts.filter(
+      (a) => !seen.has(`${a.call_id}|${a.severity}`)
+    );
+    return [...extras, ...pollAlerts];
+  })();
 
   const [avg, setAvg] = useState<number | null>(initialAvgDeterioration ?? null);
 
