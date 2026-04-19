@@ -4,6 +4,7 @@ import { Glass } from "@/components/ui/Glass";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { SeverityChip } from "@/components/ui/SeverityChip";
 import { Sparkline } from "@/components/ui/Sparkline";
+import { OutcomePill } from "@/components/admin/OutcomePill";
 import {
   actionToSeverity,
   formatRelative,
@@ -19,6 +20,7 @@ export type PatientCardProps = {
   lastDeterioration?: number | null;
   lastAction?: string | null;
   lastCalledAt?: string | null;
+  lastOutcome?: "fine" | "schedule_visit" | "escalated_911" | null;
 };
 
 export function PatientCard({
@@ -27,6 +29,7 @@ export function PatientCard({
   lastDeterioration,
   lastAction,
   lastCalledAt,
+  lastOutcome,
 }: PatientCardProps) {
   const severity: Severity =
     actionToSeverity(lastAction) !== "none"
@@ -64,7 +67,10 @@ export function PatientCard({
               {surgeryLabel(p.surgery_type)}
             </div>
           </div>
-          <SeverityChip severity={severity} size="sm" pulse />
+          <div className="flex items-center gap-1.5">
+            <OutcomePill outcome={lastOutcome ?? null} />
+            <SeverityChip severity={severity} size="sm" pulse />
+          </div>
         </div>
 
         <div className="mt-4 flex items-end justify-between gap-3">

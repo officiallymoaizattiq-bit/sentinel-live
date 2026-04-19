@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -105,6 +106,15 @@ class Call(BaseModel):
     llm_degraded: bool = False
     audio_degraded: bool = False
     short_call: bool = False
+    conversation_id: str | None = None
+    ended_at: datetime | None = None
+    end_reason: Literal["agent_signal", "timeout_40s", "manual"] | None = None
+    summary_patient: str | None = None
+    summary_nurse: str | None = None
+    summaries_generated_at: datetime | None = None
+    summaries_error: str | None = None
+    outcome_label: Literal["fine", "schedule_visit", "escalated_911"] | None = None
+    escalation_911: bool = False
 
     model_config = {"populate_by_name": True}
 
@@ -118,6 +128,8 @@ class Alert(BaseModel):
     sent_at: datetime
     acknowledged_by: str | None = None
     ack_at: datetime | None = None
+    acknowledged: bool = False
+    acknowledged_at: datetime | None = None
 
     model_config = {"populate_by_name": True}
 

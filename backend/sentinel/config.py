@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # device skip the 6-digit code flow during hackathon demos / local
     # development. Set to a random string in production to disable.
     mobile_demo_passkey: str = "m"
+    enable_call_summary: bool = True
+    elevenlabs_webhook_secret: str = ""
 
 
 @lru_cache

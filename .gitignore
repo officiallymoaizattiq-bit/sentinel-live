@@ -25,3 +25,7 @@ mobile/*.log
 mobile/.env
 mobile/.env.local
 mobile/web-build/
+.env.*.local
+
+# TS build info
+*.tsbuildinfo

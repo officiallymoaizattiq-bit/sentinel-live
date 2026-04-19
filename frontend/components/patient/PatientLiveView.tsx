@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { CallRecord } from "@/lib/api";
+import type { Call, CallRecord } from "@/lib/api";
 import { api } from "@/lib/api";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
 import { useEventStream } from "@/lib/hooks/useEventStream";
+import { CallLogCard } from "@/components/patient/CallLogCard";
+import { Fake911Modal } from "@/components/patient/Fake911Modal";
 
 const WIDGET_SRC = "https://elevenlabs.io/convai-widget/index.js";
 
@@ -32,6 +34,11 @@ export function PatientLiveView({
   const [calls, setCalls] = useState<CallRecord[]>(initialCalls);
   const [incoming, setIncoming] = useState<{ at: string; mode: string } | null>(null);
   const [widgetOpen, setWidgetOpen] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [latestCall, setLatestCall] = useState<Call | null>(
+    initialCalls?.[initialCalls.length - 1] ?? null
+  );
+  const [show911, setShow911] = useState(false);
 
   useEffect(() => {
     if (document.querySelector(`script[src="${WIDGET_SRC}"]`)) return;
@@ -40,12 +47,86 @@ export function PatientLiveView({
     document.body.appendChild(s);
   }, []);
 
+  useEffect(() => {
+    if (!widgetOpen) { setSecondsLeft(null); return; }
+    const startedAt = Date.now();
+    const MIN_MS = 40_000;
+    const MAX_MS = 60_000;
+    let done = false;
+    setSecondsLeft(60);
+
+    const finalize = async (reason: string) => {
+      if (done) return;
+      done = true;
+      const sev = (document.getElementById("demoSeverity") as HTMLSelectElement)?.value;
+      try { await api.widgetEndCall(patientId, sev); } catch {}
+      setWidgetOpen(false);
+      // eslint-disable-next-line no-console
+      console.log("widget auto-end:", reason);
+    };
+
+    const tick = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      setSecondsLeft(Math.max(0, Math.ceil((MAX_MS - elapsed) / 1000)));
+    }, 500);
+
+    // Listen for ElevenLabs widget end/disconnect signals.
+    const isEndEvent = (t: string) =>
+      /convai.*(end|disconnect|close|stop|ended)/i.test(t) ||
+      /(call|conversation).*ended/i.test(t) ||
+      t === "elevenlabs-convai:end" ||
+      t === "elevenlabs-convai:call-ended";
+    const onEvt = (e: Event) => {
+      if (!isEndEvent(e.type)) return;
+      if (Date.now() - startedAt < MIN_MS) return; // ignore pre-minimum ends
+      finalize(`widget-event:${e.type}`);
+    };
+    // Widget dispatches on window + on its own element. Attach broadly.
+    const listenTypes = [
+      "elevenlabs-convai:end",
+      "elevenlabs-convai:call-ended",
+      "convai-conversation-end",
+      "convai-call-ended",
+      "convai-end",
+      "agent-end",
+      "conversation-ended",
+    ];
+    listenTypes.forEach((t) => {
+      window.addEventListener(t, onEvt as EventListener);
+      document.addEventListener(t, onEvt as EventListener);
+    });
+
+    const hardCap = window.setTimeout(() => finalize("60s-cap"), MAX_MS);
+
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(hardCap);
+      listenTypes.forEach((t) => {
+        window.removeEventListener(t, onEvt as EventListener);
+        document.removeEventListener(t, onEvt as EventListener);
+      });
+    };
+  }, [widgetOpen, patientId]);
+
   const { connected } = useEventStream((e) => {
     if (e.type === "pending_call" && e.patient_id === patientId) {
       setIncoming({ at: e.at, mode: e.mode });
     }
     if (e.type === "call_scored" && e.patient_id === patientId) {
       api.calls(patientId).then(setCalls).catch(() => void 0);
+    }
+    if (e.type === "call_completed" && e.patient_id === patientId) {
+      setLatestCall((prev) => ({
+        ...((prev ?? {}) as Call),
+        id: e.call_id,
+        patient_id: e.patient_id,
+        outcome_label: e.outcome_label,
+        escalation_911: e.escalation_911,
+        summary_patient: e.summary_patient,
+        summary_nurse: e.summary_nurse,
+        summaries_generated_at: new Date().toISOString(),
+      } as Call));
+      if (e.escalation_911) setShow911(true);
     }
   });
 
@@ -102,13 +183,35 @@ export function PatientLiveView({
       {widgetOpen && agentId && (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold">Live check-in</div>
-            <button
-              onClick={() => setWidgetOpen(false)}
-              className="text-xs text-slate-400 underline"
-            >
-              End
-            </button>
+            <div className="text-sm font-semibold">
+              Live check-in
+              {secondsLeft != null && (
+                <span className="ml-2 text-[11px] text-slate-400">
+                  auto-ends in {Math.max(0, secondsLeft)}s
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                id="demoSeverity"
+                defaultValue="none"
+                className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-200"
+              >
+                <option value="none">Fine</option>
+                <option value="nurse_alert">Schedule visit</option>
+                <option value="suggest_911">911</option>
+              </select>
+              <button
+                onClick={async () => {
+                  const sev = (document.getElementById("demoSeverity") as HTMLSelectElement)?.value;
+                  try { await api.widgetEndCall(patientId, sev); } catch {}
+                  setWidgetOpen(false);
+                }}
+                className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+              >
+                End & summarize
+              </button>
+            </div>
           </div>
           <elevenlabs-convai agent-id={agentId}></elevenlabs-convai>
         </div>
@@ -135,6 +238,9 @@ export function PatientLiveView({
         <h2 className="mb-2 text-sm text-slate-400">Trend</h2>
         <TrajectoryChart points={points} />
       </section>
+
+      {latestCall && <CallLogCard call={latestCall} audience="patient" />}
+      {show911 && <Fake911Modal onAutoDismiss={() => setShow911(false)} />}
 
       <footer className="pt-4">
         <form action="/api/auth/logout" method="POST">

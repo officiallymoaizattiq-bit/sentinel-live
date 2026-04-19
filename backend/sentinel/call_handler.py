@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -208,3 +209,30 @@ async def finalize_call(
         llm=GeminiLLM(),
     )
     return new_id
+
+
+async def _dispatch_elevenlabs(*, patient_id: str, call_id: str) -> dict:
+    """Delegate to the existing ElevenLabs outbound dial.
+
+    Returns at least {"conversation_id": <str>} when available. Override in tests.
+    This is a thin indirection to enable watchdog spawning without modifying
+    the existing dial path.
+    """
+    # Delegate to the existing place_call path; it returns a call_id (str), not
+    # a conversation_id. We look up the stored conversation_id from the DB doc
+    # that place_call persists so that dial_patient_with_watchdog can obtain it.
+    result_call_id = await place_call(patient_id)
+    db = get_db()
+    doc = await db.calls.find_one({"_id": result_call_id})
+    conversation_id = (doc or {}).get("conversation_id")
+    return {"conversation_id": conversation_id} if conversation_id else {}
+
+
+async def dial_patient_with_watchdog(*, patient_id: str, call_id: str) -> dict:
+    from sentinel.watchdog import start_call_watchdog
+
+    result = await _dispatch_elevenlabs(patient_id=patient_id, call_id=call_id)
+    conversation_id = result.get("conversation_id") if isinstance(result, dict) else None
+    if conversation_id:
+        asyncio.create_task(start_call_watchdog(conversation_id))
+    return result if isinstance(result, dict) else {"conversation_id": None}
