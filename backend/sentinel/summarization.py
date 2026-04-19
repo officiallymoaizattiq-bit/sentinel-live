@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+from types import SimpleNamespace
 from typing import Any
 
-import google.generativeai as genai
+from openai import AsyncOpenAI
 
 from sentinel.config import get_settings
 
 log = logging.getLogger("sentinel.summarization")
-
-# Model id. `gemini-2.5-flash` was hit-or-miss depending on the installed
-# google-generativeai version and whether the account has preview access; a
-# 404/400 bubbled back as `summaries_error` and left `summary_patient` null.
-# `gemini-2.0-flash` is the stable, broadly available Flash tier and matches
-# what sentinel.scoring uses.
-_MODEL_ID = "gemini-2.0-flash"
 
 _PATIENT_PROMPT = """You are explaining a post-surgery phone check-in result
 to the patient themself. Use plain, simple English at a 6th-grade reading
@@ -41,16 +34,12 @@ Clinical summary:"""
 
 
 def _extract_text(response: Any) -> str:
-    """Pull plain text out of a Gemini response without crashing on blocked
-    or function-call-only responses.
+    """Pull plain text out of a response without crashing on blocked
+    or empty responses.
 
-    `response.text` is a property that RAISES on some SDK versions when there
-    are no text parts (safety block, function call, empty response). We want
-    "no summary" semantics, not a propagated error, so walk the candidate
-    structure when the fast path fails.
+    Fast path matches AsyncMock shape (object with plain .text attr).
+    Fallback walks OpenAI chat-completion `choices[0].message.content`.
     """
-    # Fast path — matches the SDK's own accessor, and also matches the
-    # AsyncMock shape used by the unit tests (object with a plain .text attr).
     try:
         text = getattr(response, "text", None)
         if isinstance(text, str) and text.strip():
@@ -59,56 +48,50 @@ def _extract_text(response: Any) -> str:
         pass
 
     try:
-        candidates = getattr(response, "candidates", None) or []
-        for cand in candidates:
-            content = getattr(cand, "content", None)
-            if not content:
+        choices = getattr(response, "choices", None) or []
+        for ch in choices:
+            msg = getattr(ch, "message", None)
+            if not msg:
                 continue
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                t = getattr(part, "text", None)
-                if isinstance(t, str) and t.strip():
-                    return t.strip()
-    except Exception:
-        pass
-
-    try:
-        d = response.to_dict() if hasattr(response, "to_dict") else {}
-        for cand in d.get("candidates", []):
-            for part in cand.get("content", {}).get("parts", []):
-                t = part.get("text")
-                if isinstance(t, str) and t.strip():
-                    return t.strip()
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content.strip():
+                return content.strip()
     except Exception:
         pass
 
     return ""
 
 
+def _client() -> AsyncOpenAI:
+    s = get_settings()
+    if not s.openrouter_api_key:
+        raise RuntimeError(
+            "openrouter_api_key is empty — set OPENROUTER_API_KEY in "
+            "backend/.env so post-call summaries can be generated."
+        )
+    return AsyncOpenAI(api_key=s.openrouter_api_key, base_url=s.openrouter_base_url)
+
+
 async def _generate(prompt: str) -> Any:
     s = get_settings()
-    if not s.gemini_api_key:
-        raise RuntimeError(
-            "gemini_api_key is empty — set GEMINI_API_KEY in backend/.env "
-            "so post-call summaries can be generated."
-        )
-    genai.configure(api_key=s.gemini_api_key)
-    model = genai.GenerativeModel(_MODEL_ID)
-    return await asyncio.to_thread(model.generate_content, prompt)
+    client = _client()
+    resp = await client.chat.completions.create(
+        model=s.openrouter_model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    content = ""
+    try:
+        content = (resp.choices[0].message.content or "").strip()
+    except Exception:
+        content = ""
+    return SimpleNamespace(text=content, _raw=resp)
 
 
 async def _extract_or_raise(response: Any) -> str:
     text = _extract_text(response)
     if not text:
-        try:
-            feedback = getattr(response, "prompt_feedback", None)
-            if feedback:
-                log.warning(
-                    "Gemini returned no text. prompt_feedback=%s", feedback
-                )
-        except Exception:
-            pass
-        raise RuntimeError("Gemini returned an empty response")
+        log.warning("OpenRouter returned no text. raw=%s", getattr(response, "_raw", None))
+        raise RuntimeError("OpenRouter returned an empty response")
     return text
 
 

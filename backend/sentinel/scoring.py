@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 from uuid import uuid4
 
-import google.generativeai as genai
+from openai import AsyncOpenAI
 
 from sentinel.audio_features import rules_only_score
 from sentinel.config import get_settings
@@ -17,6 +17,8 @@ from sentinel.models import (
     SimilarCall,
     TranscriptTurn,
 )
+
+_EMBED_DIM = 1536
 
 RUBRIC = """You are a post-operative abdominal-surgery monitoring assistant.
 Given a phone check-in transcript plus voice biomarkers plus prior call history,
@@ -80,38 +82,46 @@ class LLM(Protocol):
     async def embed(self, text: str) -> list[float]: ...
 
 
+_EMIT_SCORE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_score",
+        "description": "Emit deterioration score.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "deterioration": {"type": "number"},
+                "qsofa": {"type": "integer"},
+                "news2": {"type": "integer"},
+                "red_flags": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string"},
+                "recommended_action": {
+                    "type": "string",
+                    "enum": [a.value for a in RecommendedAction],
+                },
+            },
+            "required": [
+                "deterioration", "qsofa", "news2",
+                "red_flags", "summary", "recommended_action",
+            ],
+        },
+    },
+}
+
+
 class GeminiLLM:
+    """Scoring LLM backed by OpenRouter. Name kept for import compatibility."""
+
     def __init__(self) -> None:
-        genai.configure(api_key=get_settings().gemini_api_key)
-        self._model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            tools=[{
-                "function_declarations": [{
-                    "name": "emit_score",
-                    "description": "Emit deterioration score.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "deterioration": {"type": "number"},
-                            "qsofa": {"type": "integer"},
-                            "news2": {"type": "integer"},
-                            "red_flags": {"type": "array", "items": {"type": "string"}},
-                            "summary": {"type": "string"},
-                            "recommended_action": {
-                                "type": "string",
-                                "enum": [a.value for a in RecommendedAction],
-                            },
-                        },
-                        "required": [
-                            "deterioration", "qsofa", "news2",
-                            "red_flags", "summary", "recommended_action",
-                        ],
-                    },
-                }]
-            }],
-            system_instruction=RUBRIC,
+        s = get_settings()
+        if not s.openrouter_api_key:
+            raise RuntimeError(
+                "openrouter_api_key is empty — set OPENROUTER_API_KEY in backend/.env"
+            )
+        self._client = AsyncOpenAI(
+            api_key=s.openrouter_api_key, base_url=s.openrouter_base_url
         )
-        self._embed_model = "text-embedding-004"
+        self._model_id = s.openrouter_model
 
     async def score(self, *, transcript, features, drift, history, rubric, vitals) -> Score:
         user = json.dumps({
@@ -121,18 +131,29 @@ class GeminiLLM:
             "history_last_3_calls": history,
             "vitals_last_2h": vitals,
         })
-        resp = await self._model.generate_content_async(user)
-        for part in resp.candidates[0].content.parts:
-            fc = getattr(part, "function_call", None)
-            if fc and fc.name == "emit_score":
-                args = dict(fc.args)
+        resp = await self._client.chat.completions.create(
+            model=self._model_id,
+            messages=[
+                {"role": "system", "content": rubric or RUBRIC},
+                {"role": "user", "content": user},
+            ],
+            tools=[_EMIT_SCORE_TOOL],
+            tool_choice={"type": "function", "function": {"name": "emit_score"}},
+        )
+        msg = resp.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            fn = getattr(tc, "function", None)
+            if fn and fn.name == "emit_score":
+                args = json.loads(fn.arguments or "{}")
                 args["recommended_action"] = RecommendedAction(args["recommended_action"])
                 return Score(**args)
-        raise RuntimeError("Gemini did not emit_score")
+        raise RuntimeError("OpenRouter did not emit_score")
 
     async def embed(self, text: str) -> list[float]:
-        r = await genai.embed_content_async(model=self._embed_model, content=text)
-        return r["embedding"]
+        # Option C: OpenRouter has no embeddings endpoint. Return zero vector;
+        # vector search degrades gracefully via the existing dot-product fallback.
+        return [0.0] * _EMBED_DIM
 
 
 async def _last_3_calls(patient_id: str) -> list[dict]:

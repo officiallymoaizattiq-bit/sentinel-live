@@ -135,7 +135,7 @@ If the patient describes anything urgent (severe chest pain, can't breathe, losi
 - `ffmpeg`, `libsndfile` on PATH (`brew install ffmpeg libsndfile`)
 - MongoDB (Atlas or `mongodb://localhost:27017`)
 - An ElevenLabs account + Conversational AI agent
-- A Gemini API key
+- An OpenRouter API key (proxies Gemini 2.0 Flash)
 - *(Optional)* Twilio account for real outbound calls
 
 ### 1. Install
@@ -165,7 +165,7 @@ Fill in `backend/.env`:
 | Key | Get it from |
 |---|---|
 | `MONGO_URI` | Atlas cluster *Connect* string, or `mongodb://localhost:27017` |
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) — routes `google/gemini-2.0-flash-001` |
 | `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` | [elevenlabs.io → Conversational AI](https://elevenlabs.io/app/conversational-ai) |
 | `ADMIN_PASSKEY` + `PATIENT_PASSKEY` | Anything you want |
 | `SESSION_SECRET` + `DEVICE_TOKEN_SECRET` | Long random strings (`openssl rand -hex 32`) |
