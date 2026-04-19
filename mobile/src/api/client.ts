@@ -171,4 +171,9 @@ export const api = {
       creds,
       { method: 'POST' },
     ),
+  mobileEndCall: (creds: Credentials, conversation_id: string) =>
+    request<{ call_id: string }>('/api/calls/mobile-end', creds, {
+      method: 'POST',
+      body: { conversation_id },
+    }),
 };

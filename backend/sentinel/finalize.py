@@ -33,6 +33,13 @@ async def finalize_call(
     transcript: str,
     end_reason: str,
 ) -> dict:
+    """Post-call finalize: write summary_patient + summary_nurse via Gemini,
+    send escalation alerts, publish `call_completed` for live dashboards.
+
+    Idempotent: if `ended_at` is already set, re-broadcast `call_completed`
+    and short-circuit. To retry a failed summary, use
+    `POST /api/calls/{id}/summary/regenerate`.
+    """
     settings = get_settings()
     db = get_db()
 
@@ -41,8 +48,25 @@ async def finalize_call(
         log.warning("finalize_call: unknown conversation_id=%s", conversation_id)
         return {"already_finalized": False, "skipped": True}
 
-    if doc.get("ended_at") is not None:
-        return {"already_finalized": True, "call_id": doc["_id"]}
+    already_ended = doc.get("ended_at") is not None
+
+    if already_ended:
+        publish(
+            {
+                "type": "call_completed",
+                "call_id": doc["_id"],
+                "patient_id": doc["patient_id"],
+                "outcome_label": doc.get("outcome_label"),
+                "escalation_911": bool(doc.get("escalation_911")),
+                "summary_patient": doc.get("summary_patient"),
+                "summary_nurse": doc.get("summary_nurse"),
+            }
+        )
+        return {
+            "already_finalized": True,
+            "call_id": doc["_id"],
+            "summary_ok": bool((doc.get("summary_patient") or "").strip()),
+        }
 
     score = await _score_if_needed(doc, transcript)
     action = RecommendedAction(score["recommended_action"])
@@ -72,7 +96,7 @@ async def finalize_call(
             update["summaries_generated_at"] = now
         except Exception as e:
             err = str(e)
-            log.exception("gemini summary failed")
+            log.exception("gemini summary failed for %s: %s", conversation_id, e)
 
     update["summary_patient"] = summary_p
     update["summary_nurse"] = summary_n
@@ -102,4 +126,8 @@ async def finalize_call(
         }
     )
 
-    return {"already_finalized": False, "call_id": doc["_id"]}
+    return {
+        "already_finalized": False,
+        "call_id": doc["_id"],
+        "summary_ok": summary_p is not None,
+    }

@@ -62,8 +62,10 @@ function CallSurface() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
-  const { startSession, endSession } = useConversationControls();
+  const { startSession, endSession, getId } = useConversationControls();
   const { status } = useConversationStatus();
+  const conversationIdRef = useRef<string | null>(null);
+  const finalizeSentRef = useRef(false);
 
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -137,7 +139,18 @@ function CallSurface() {
     if (status === 'connected' && callStartMs == null) {
       setCallStartMs(Date.now());
     }
-  }, [status, callStartMs]);
+    // Capture the EL conversation id as soon as it's assigned. getId() may
+    // briefly return '' during the handshake, so we poll the ref on every
+    // status change and keep the first non-empty value.
+    if (!conversationIdRef.current) {
+      try {
+        const id = getId?.();
+        if (id) conversationIdRef.current = id;
+      } catch {
+        // SDK may not expose getId on older versions.
+      }
+    }
+  }, [status, callStartMs, getId]);
 
   useEffect(() => {
     dismissIncomingCallNotification().catch(() => {});
@@ -155,6 +168,22 @@ function CallSurface() {
 
   const liveRef = useRef(live);
   liveRef.current = live;
+
+  // Tell the backend the call has ended so it can pull transcript + audio
+  // from ElevenLabs, score, and generate Gemini summaries — immediately,
+  // instead of waiting on the 30s scheduler poll. Idempotent server-side.
+  const sendFinalizeToServer = useCallback(async (c: Credentials | null) => {
+    if (!c || finalizeSentRef.current) return;
+    const convId = conversationIdRef.current;
+    if (!convId) return;
+    finalizeSentRef.current = true;
+    try {
+      await api.mobileEndCall(c, convId);
+    } catch {
+      // Server-side scheduler poll will retry within ~30s. Worst-case the
+      // summary just shows up slightly later.
+    }
+  }, []);
 
   const drainAndPost = useCallback(async (c: Credentials | null) => {
     if (!c || drainedRef.current) return;
@@ -180,10 +209,11 @@ function CallSurface() {
     terminalRef.current = true;
 
     dismissIncomingCallNotification().catch(() => {});
+    sendFinalizeToServer(creds).catch(() => {});
     drainAndPost(creds).catch(() => {});
     const timeoutId = setTimeout(() => router.back(), 1200);
     return () => clearTimeout(timeoutId);
-  }, [status, hasBeenLive, creds, drainAndPost, router]);
+  }, [status, hasBeenLive, creds, drainAndPost, router, sendFinalizeToServer]);
 
   // Belt-and-braces sweep: on unmount (e.g. user hits system back), clear any
   // incoming-call notification still posted. Without this the heads-up
@@ -209,6 +239,7 @@ function CallSurface() {
       } catch {
         // best-effort — the useEffect watching `status` will still run.
       }
+      sendFinalizeToServer(creds).catch(() => {});
       if (!terminalRef.current) {
         terminalRef.current = true;
         drainAndPost(creds).catch(() => {});
@@ -220,7 +251,7 @@ function CallSurface() {
       clearTimeout(wrapTimer);
       clearTimeout(endTimer);
     };
-  }, [callStartMs, endSession, creds, drainAndPost, router]);
+  }, [callStartMs, endSession, creds, drainAndPost, router, sendFinalizeToServer]);
 
   const onEndPress = async () => {
     try {
@@ -229,6 +260,7 @@ function CallSurface() {
       // best-effort
     }
     dismissIncomingCallNotification().catch(() => {});
+    sendFinalizeToServer(creds).catch(() => {});
     if (!terminalRef.current) {
       terminalRef.current = true;
       drainAndPost(creds).catch(() => {});

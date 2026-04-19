@@ -178,6 +178,18 @@ async def regenerate_summary(call_id: str):
             "summaries_error": None,
         }},
     )
+    # Broadcast so any mobile/web client subscribed to SSE updates the UI
+    # without having to refetch. Without this, the regenerate button only
+    # updates the caller's local state; other clients sit stale.
+    event_bus.publish({
+        "type": "call_completed",
+        "call_id": call_id,
+        "patient_id": doc.get("patient_id"),
+        "outcome_label": doc.get("outcome_label"),
+        "escalation_911": bool(doc.get("escalation_911")),
+        "summary_patient": p,
+        "summary_nurse": n,
+    })
     return {"summary_patient": p, "summary_nurse": n}
 
 
@@ -368,6 +380,81 @@ async def finalize(body: FinalizeBody):
     new_id = await finalize_call(conversation_id=body.conversation_id)
     if new_id is None:
         raise HTTPException(404, "no call found for conversation_id")
+    return {"call_id": new_id}
+
+
+class MobileEndBody(_BM):
+    conversation_id: str
+
+
+@router.post("/calls/mobile-end")
+async def mobile_end_call(
+    body: MobileEndBody,
+    token: dict = Depends(require_device_token),
+):
+    """Patient mobile app signals its EL call has ended. Fires the full
+    finalize pipeline (transcript pull + score + Gemini summary + SSE
+    broadcast) immediately instead of waiting on the 30s scheduler poll.
+
+    If the call was already finalized but has no summary_patient (prior
+    Gemini failure, scheduler crash, etc.), regenerate the summary in
+    place and publish `call_completed` so the mobile dashboard snaps out
+    of "Generating summary…".
+    """
+    from sentinel.call_handler import finalize_call
+    patient_id = token.get("pid")
+    new_id = await finalize_call(
+        conversation_id=body.conversation_id,
+        patient_id_fallback=patient_id,
+    )
+    if new_id is None:
+        raise HTTPException(404, "no call found for conversation_id")
+
+    db = get_db()
+    doc = await db.calls.find_one({"_id": new_id})
+    if not doc:
+        return {"call_id": new_id}
+
+    needs_summary = not (doc.get("summary_patient") or "").strip()
+    if needs_summary:
+        try:
+            transcript_text = "\n".join(
+                f"{t['role']}: {t['text']}"
+                for t in doc.get("transcript", [])
+                if t.get("text")
+            )
+            score = doc.get("score") or {}
+            p = await summarize_patient(transcript=transcript_text)
+            n = await summarize_nurse(
+                transcript=transcript_text,
+                vitals={},
+                score={k: score.get(k) for k in ("deterioration", "qsofa", "news2")},
+            )
+            now = datetime.now(timezone.utc)
+            await db.calls.update_one(
+                {"_id": new_id},
+                {"$set": {
+                    "summary_patient": p,
+                    "summary_nurse": n,
+                    "summaries_generated_at": now,
+                    "summaries_error": None,
+                }},
+            )
+            event_bus.publish({
+                "type": "call_completed",
+                "call_id": new_id,
+                "patient_id": doc.get("patient_id"),
+                "outcome_label": doc.get("outcome_label"),
+                "escalation_911": bool(doc.get("escalation_911")),
+                "summary_patient": p,
+                "summary_nurse": n,
+            })
+        except Exception as e:
+            await db.calls.update_one(
+                {"_id": new_id},
+                {"$set": {"summaries_error": str(e)}},
+            )
+
     return {"call_id": new_id}
 
 
