@@ -6,19 +6,15 @@
 
 Voice check-ins · Wearable vitals · Live risk trajectory · Human-in-the-loop escalation
 
-[Live demo script](#live-demo-in-60-seconds) · [Architecture](#architecture) · [Quick start](#quick-start) · [Mobile app](#mobile-companion) · [Runbook](./docs/RUNBOOK.md) · [Backend ↔ mobile contract](./docs/backend-contract.md)
-
 </div>
 
 ---
 
 ## Why Sentinel
 
-Sepsis is fast, quiet, and often missed until it's too late. Roughly **270,000 Americans die of sepsis each year, and ~80% of cases begin outside the hospital** — after discharge, when formal monitoring stops but physiology has not stabilised. Families frequently say in retrospect that their loved one *"sounded off"* the day before: breathless, confused, slower to find words.
+Sepsis is fast, quiet, and often missed until it's too late. ~270,000 Americans die of sepsis annually, and ~80% of cases begin **outside** the hospital — after discharge, when formal monitoring stops but physiology has not stabilised. Families frequently say in retrospect that their loved one *"sounded off"* the day before: breathless, confused, slower to find words.
 
 Sentinel lives in that gap. A focused triage surface for a clear cohort (post-op, days 0–14), grounded in published clinical rubrics (qSOFA, NEWS2, ACS NSQIP post-op), with an escalation ladder that **always hands off to a human**.
-
-Built for **Hook Em Hack**. Patient-centred, not provider-centred.
 
 ---
 
@@ -26,10 +22,10 @@ Built for **Hook Em Hack**. Patient-centred, not provider-centred.
 
 - **Calls the patient** on a recurring schedule — browser widget today, real outbound phone via Twilio + ElevenLabs tomorrow.
 - The call is driven by an **ElevenLabs Conversational AI agent** with a strict nurse persona: breathing → fever → pain → wound → eating → confusion, in about a minute.
-- When the call ends, Sentinel pulls the transcript + audio from ElevenLabs and scores it with **Gemini 2.x Flash** against qSOFA / NEWS2 red flags. Voice biomarkers (jitter, shimmer, pause ratio, estimated breaths per minute) are extracted via **openSMILE eGeMAPS** and compared to the patient's day-1 baseline.
-- **Wearable vitals** (heart rate, SpO₂, respiratory rate, HRV, sleep, activity) ingested from the paired mobile app are folded into the same scoring prompt so Gemini reasons over the full picture.
-- Results are persisted to **MongoDB Atlas** and **pushed live** to connected dashboards via **Server-Sent Events** — no polling, no refresh.
-- If the deterioration score crosses a threshold, Sentinel **escalates**: SMS to caregiver, SMS to on-call nurse, dashboard banner, and a heads-up notification on the patient's mobile device. A dead-man's-switch audit job flags any case where an alert should have fired but didn't.
+- When the call ends, Sentinel pulls the transcript from ElevenLabs and scores it via **Gemini 2.0 Flash through OpenRouter** against qSOFA / NEWS2 red flags. Voice biomarkers (jitter, shimmer, pause ratio, estimated breaths per minute) are extracted via **openSMILE eGeMAPS**.
+- **Wearable vitals** (HR, SpO₂, respiratory rate, HRV, temp) are ingested from the paired mobile app *or* seeded from the in-app demo panel, and folded into scoring.
+- Results are persisted to **MongoDB** and pushed live to connected dashboards via **Server-Sent Events**.
+- If the deterioration score crosses a threshold, Sentinel **escalates**: SMS to caregiver, SMS to on-call nurse, dashboard banner, and a push notification on the patient's mobile device. A dead-man's-switch audit job flags any case where an alert should have fired but didn't.
 
 ---
 
@@ -37,12 +33,11 @@ Built for **Hook Em Hack**. Patient-centred, not provider-centred.
 
 | Surface | Audience | What it is |
 |---|---|---|
-| **`/admin`** | Clinician | Patient grid, KPI strip, filters, **Call now** on each card. |
-| **`/patients/[id]`** | Clinician | Patient hero, live trajectory, wearable-vitals panel, call log, **Trigger call**. |
-| **`/patient`** | Patient (web fallback) | SSE "incoming call" toast, Answer opens the ElevenLabs widget. |
-| **Mobile (`mobile/`)** | Patient | Native Expo app. Pairs to the backend, syncs HealthKit / Health Connect vitals in the background, receives push calls, shows the same live dashboard as the web patient view — plus a plain-language AI summary after each check-in. |
+| **`/admin`** | Clinician | Patient grid, KPI strip (open alerts / due today), live alert stream, **Call now** on each card. |
+| **`/patient`** | Patient (web fallback) | Incoming-call card with pulse ring, ElevenLabs Convai widget, live trajectory, plain-language AI summary. Mic-priming for iOS Safari. |
+| **Mobile (`mobile/`)** | Patient | Native Expo app. Pair code + device JWT, HealthKit / Health Connect background sync, Expo push for incoming calls, in-app voice. |
 
-Two roles, one passkey each. `/admin/*` and `/patient/*` are gated at the Next.js edge middleware with HMAC-signed session cookies (14-day TTL, `HttpOnly`).
+Two roles, one passkey each. `/admin/*` and `/patient/*` are gated at the Next.js edge middleware with HMAC-signed session cookies (14-day TTL, `HttpOnly`, `Secure` on HTTPS origins).
 
 ---
 
@@ -50,34 +45,48 @@ Two roles, one passkey each. `/admin/*` and `/patient/*` are gated at the Next.j
 
 | Layer | Choice | Why |
 |---|---|---|
-| Backend API | **FastAPI** (Python 3.11+) | Async, typed, fits the Motor/Mongo + Gemini/EL stacks. |
-| Database | **MongoDB Atlas** | Time-series collection for vitals + native vector search for cohort similarity, in one store. |
-| Scoring LLM | **Google Gemini 2.x Flash** | Long-context reasoning over transcript + voice biomarkers + wearable vitals + prior calls. Native function-calling for structured scores. |
-| Voice agent | **ElevenLabs Conversational AI** | Natural, interruptible, low-latency dialogue. |
-| Telephony (optional) | **Twilio** | Real outbound dialling via ElevenLabs' native Twilio integration. |
+| Backend API | **FastAPI** (Python 3.11+) | Async, typed, fits Motor/Mongo + OpenRouter/ElevenLabs. |
+| Database | **MongoDB** (Atlas or local) | Time-series collection for vitals, aggregation pipelines for the dashboard, native vector search for cohort similarity. |
+| Scoring / summaries | **Gemini 2.0 Flash via OpenRouter** | Unified API, one key, Gemini-direct fallback. |
+| Voice agent | **ElevenLabs Conversational AI** | Natural, interruptible dialogue; self-serve agent config. |
+| Telephony (optional) | **Twilio** | Real outbound dialling via ElevenLabs' Twilio integration. |
 | Audio features | **openSMILE (eGeMAPSv02)** | Published clinical voice-biomarker set — no training needed. |
-| Scheduler | **APScheduler** | Cron for call triggering + auto-finalise + dead-man's-switch audit, on the captured event loop. |
-| Web frontend | **Next.js 14 (App Router) + Tailwind + Recharts** | SSR, clean `/admin` ↔ `/patient` split, Recharts for trajectory + vitals. |
-| Realtime | **Server-Sent Events** | Simpler than WebSockets, no backchannel, bypasses Next's dev proxy to avoid SSE buffering. |
-| Mobile companion | **Expo 52 + Expo Router** (`mobile/`) | Pair-code + device JWT, HealthKit / Health Connect → background sync → `POST /api/vitals/batch` (idempotent, clock-skew aware), Expo push for incoming calls, LiveKit/WebRTC for in-app voice. |
+| Scheduler | **APScheduler** | Cron for call triggering + auto-finalise + audit job. |
+| Web frontend | **Next.js 14 (App Router) + Tailwind + Recharts** | SSR, split `/admin` ↔ `/patient`, Recharts trajectories. |
+| Realtime | **Server-Sent Events** | Simpler than WebSockets, works through Next rewrites. |
+| Mobile | **Expo 52 + Expo Router** (`mobile/`) | HealthKit / Health Connect → background sync → `POST /api/vitals/batch`, Expo push, LiveKit voice. |
 
-No Redis, no broker, no Celery. Hand-rolled HMAC JWT, in-process SSE pub/sub.
+No Redis, no broker, no Celery. Hand-rolled HMAC JWT, in-process SSE pub/sub, in-process rate limiter.
 
 ---
 
-## Live demo in 60 seconds
+## Demo in 60 seconds (laptop-only)
 
-Open two browser windows — one normal, one incognito, so cookie jars don't collide.
+1. Start the stack (below).
+2. Open two browser windows — one normal, one incognito.
+3. **Window 1** — `http://localhost:3000/login` → passkey `a` → `/admin`.
+4. **Window 2** (incognito) — `http://localhost:3000/login` → passkey `b` → pick **David Patel** → `/patient`. Tap **Enable microphone**.
+5. *(Optional)* append `?demo=1` to the /patient URL → **Simulate sepsis trajectory** → backend seeds deteriorating HR/SpO₂/RR/temp over the last 45 min.
+6. Window 1 — **Call now** on David's card.
+7. Window 2 — pulsing incoming card → **Answer** → ElevenLabs nurse agent starts.
+8. Talk for a minute → hang up → score + patient summary + clinical summary arrive via SSE within **~3 seconds**.
 
-1. **Window 1** — sign in as admin (`ADMIN_PASSKEY`). Land on `/admin`.
-2. **Window 2** — sign in as patient (`PATIENT_PASSKEY`), pick **David Patel**. Land on `/patient`. The green **● live** badge shows the SSE stream is attached.
-3. Window 1 — hit **Call now** on David's card (or open his detail page and **Trigger call**).
-4. Window 2 — *"Sentinel is calling you"* banner appears immediately.
-5. Click **Answer**. The ElevenLabs widget mounts and the agent greets: *"Hi, this is Sentinel, your post-operative check-in nurse. Do you have a minute?"*
-6. Answer a few questions. End the call.
-7. Within 30 seconds the finalize pipeline pulls the transcript + audio, scores it, writes `summary_patient` / `summary_nurse`, and emits a `call_scored` event. Window 1's alert feed updates — no refresh.
+---
 
-If the patient describes anything urgent (severe chest pain, can't breathe, losing consciousness), the agent immediately says *"please hang up and call 911."* That's a system-prompt rule, not a prompt-engineering trick.
+## iPhone demo (Safari)
+
+The patient surface works on iPhone Safari with a self-signed HTTPS cert. iOS requires HTTPS for `getUserMedia`, so we generate a cert for the LAN IP with `mkcert` and trust the CA on the device.
+
+1. Start iPhone Personal Hotspot; laptop joins it. Note laptop's LAN IP (typically `172.20.10.x`).
+2. Generate cert for that IP (see `certs/` + `mkcert` instructions below), run the frontend with `--experimental-https`.
+3. On iPhone Safari:
+   - Open `http://<LAN-IP>:8888/rootCA.pem` (a small http.server hosting the CA).
+   - Install the downloaded profile → **Settings → VPN & Device Management** → **Install**.
+   - **Settings → General → About → Certificate Trust Settings** → enable **mkcert development CA**.
+4. Safari → `https://<LAN-IP>:3000/login` → green lock → passkey `b` → David.
+5. Laptop admin clicks **Call now** → iPhone rings → Answer → widget mounts. Safari needs a real tap on the widget orb (not an auto-start) to satisfy the mic-permission gesture requirement.
+
+Note: iOS Safari buffers ~2 KB before flushing the first SSE frame. The backend prepends a padding prelude so the stream is usable without a proxy doing it for you.
 
 ---
 
@@ -92,14 +101,14 @@ If the patient describes anything urgent (severe chest pain, can't breathe, losi
  ┌────────────────┐                       ▼
  │ Admin (laptop) │◀───── SSE /api/stream ──┐    ┌─────────────┐
  │   /admin       │                         │    │  MongoDB    │
- └────────────────┘                         │    │  Atlas      │
-                                            │    │  (patients, │
- ┌────────────────┐                         │    │   calls,    │
- │ Patient (phone)│◀───── SSE /api/stream ──┤    │   alerts,   │
- │   /patient     │                         │    │   vitals,   │
- │  + Convai mic  │─── answers call ────────┤    │   devices,  │
- └────────────────┘                         │    │   cohort)   │
-                                            ▼    └─────▲───────┘
+ └────────────────┘                         │    │             │
+                                            │    │  patients,  │
+ ┌────────────────┐                         │    │  calls,     │
+ │ Patient (phone)│◀───── SSE /api/stream ──┤    │  alerts,    │
+ │   /patient     │                         │    │  vitals,    │
+ │  + Convai mic  │─── answers call ────────┤    │  devices    │
+ └────────────────┘                         │    └─────▲───────┘
+                                            ▼          │
                                 ┌───────────────────────┴─────┐
                                 │  FastAPI (sentinel.main)    │
                                 │                             │
@@ -109,12 +118,10 @@ If the patient describes anything urgent (severe chest pain, can't breathe, losi
                                 │  └──────────┘ └──────────┘  │
                                 │  ┌──────────────────────┐   │
                                 │  │ ElevenLabs Convai    │   │
-                                │  │ (agent dialog)       │   │
                                 │  └──────────────────────┘   │
                                 │  ┌──────────────────────┐   │
-                                │  │ Gemini score_call    │   │
-                                │  │ openSMILE features   │   │
-                                │  │ Cohort $vectorSearch │   │
+                                │  │ OpenRouter ↘ Gemini  │   │
+                                │  │  (score + summary)   │   │
                                 │  └──────────────────────┘   │
                                 │  ┌──────────────────────┐   │
                                 │  │ Escalation (Twilio   │   │
@@ -133,9 +140,9 @@ If the patient describes anything urgent (severe chest pain, can't breathe, losi
 - Python 3.11+
 - Node 18+
 - `ffmpeg`, `libsndfile` on PATH (`brew install ffmpeg libsndfile`)
-- MongoDB (Atlas or `mongodb://localhost:27017`)
-- An ElevenLabs account + Conversational AI agent
-- A Google Gemini API key (Gemini 2.0 Flash)
+- MongoDB (Atlas or local — see "Local Mongo without Docker" below)
+- An ElevenLabs account + Conversational AI agent (allowlist empty = open, or set a specific origin)
+- An OpenRouter API key (and optionally a Google Gemini API key as fallback)
 - *(Optional)* Twilio account for real outbound calls
 
 ### 1. Install
@@ -148,6 +155,8 @@ cd sentinel-live
 python -m venv backend/.venv
 source backend/.venv/bin/activate
 pip install -e backend
+# Dev extras (pytest + mongomock-motor + respx)
+pip install -e "backend[dev]"
 
 # Frontend
 cd frontend && npm install && cd ..
@@ -155,44 +164,81 @@ cd frontend && npm install && cd ..
 
 ### 2. Configure
 
+Copy examples and fill in:
+
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Fill in `backend/.env`:
+`backend/.env`:
 
-| Key | Get it from |
+| Key | Notes |
 |---|---|
-| `MONGO_URI` | Atlas cluster *Connect* string, or `mongodb://localhost:27017` |
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — Gemini 2.0 Flash |
-| `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` | [elevenlabs.io → Conversational AI](https://elevenlabs.io/app/conversational-ai) |
-| `ADMIN_PASSKEY` + `PATIENT_PASSKEY` | Anything you want |
-| `SESSION_SECRET` + `DEVICE_TOKEN_SECRET` | Long random strings (`openssl rand -hex 32`) |
+| `MONGO_URI` | Atlas connect string or `mongodb://localhost:27017`. |
+| `MONGO_DB` | Database name, e.g. `sentinel`. |
+| `OPENROUTER_API_KEY` | `sk-or-v1-...` from openrouter.ai. |
+| `OPENROUTER_MODEL` | Default `google/gemini-2.0-flash-001`. |
+| `GEMINI_API_KEY` | Optional — used as fallback if OpenRouter is down. |
+| `ELEVENLABS_API_KEY` + `ELEVENLABS_AGENT_ID` | From elevenlabs.io → Conversational AI. |
+| `ADMIN_PASSKEY` / `PATIENT_PASSKEY` | Anything you want. |
+| `SESSION_SECRET` / `DEVICE_TOKEN_SECRET` | Long random strings. |
+| `CORS_ORIGINS` | Comma-separated list of allowed browser origins. |
+| `DEMO_MODE` | `true` unlocks `/api/demo/*` endpoints and a few dev shortcuts. |
 
-And `frontend/.env.local`:
+`frontend/.env.local`:
 
 | Key | Value |
 |---|---|
-| `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` | Same agent ID as above (browser-exposed for the widget) |
-| `BACKEND_URL` | `http://localhost:8000` |
+| `BACKEND_URL` | Server-side fetch target, e.g. `http://localhost:8000`. |
+| `NEXT_PUBLIC_BACKEND_URL` | Browser SSE target. Leave empty to use Next rewrites. |
+| `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` | Same agent ID as backend (exposed to the browser for the widget). |
 
 ### 3. Run
 
 ```bash
-# terminal 1 — backend on :8000
-cd backend && source .venv/bin/activate
-export $(grep -v '^#' .env | xargs)
-uvicorn sentinel.main:app --host 0.0.0.0 --port 8000 --reload
+# terminal 1 — Mongo (if local)
+mongod --dbpath /tmp/mongo-data --bind_ip 127.0.0.1 --port 27017
 
-# terminal 2 — frontend on :3000
+# terminal 2 — backend
+cd backend && source .venv/bin/activate
+set -a && source .env && set +a
+uvicorn sentinel.main:app --host 0.0.0.0 --port 8000 --app-dir .
+
+# terminal 3 — frontend
 cd frontend && npm run dev
 
-# terminal 3 — seed demo data
+# terminal 4 — seed demo data (once)
 curl -X POST http://localhost:8000/api/demo/run
 ```
 
-Open **http://localhost:3000/login**.
+Open http://localhost:3000/login.
+
+### 3b. HTTPS dev (for iPhone demo)
+
+Generate a LAN cert + run Next over HTTPS:
+
+```bash
+# Install mkcert binary (no brew needed)
+curl -fsSL -o /tmp/mkcert https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-darwin-arm64
+chmod +x /tmp/mkcert
+
+# Create a local CA and cert for LAN IP + localhost
+mkdir -p certs && CAROOT=./certs /tmp/mkcert -install || true
+CAROOT=./certs /tmp/mkcert -cert-file certs/cert.pem -key-file certs/key.pem \
+  $(ipconfig getifaddr en0) localhost 127.0.0.1
+
+# Run Next with the cert
+cd frontend && npx next dev -p 3000 -H 0.0.0.0 \
+  --experimental-https \
+  --experimental-https-key ../certs/key.pem \
+  --experimental-https-cert ../certs/cert.pem
+
+# Serve rootCA.pem so the iPhone can fetch it
+python3 -m http.server 8888 --directory certs --bind 0.0.0.0
+```
+
+On the iPhone, fetch `http://<LAN-IP>:8888/rootCA.pem`, install the profile, enable full trust in Certificate Trust Settings, then visit `https://<LAN-IP>:3000/login`.
 
 ### 4. (Optional) Mobile dev client
 
@@ -201,19 +247,19 @@ cd mobile
 cp .env.example .env
 # edit .env: EXPO_PUBLIC_API_URL=<your backend>
 npm install --legacy-peer-deps
+# Mobile uses native modules (HealthKit, LiveKit, WebRTC) — Expo Go does NOT work.
+# You must use a dev-client build:
 npx expo prebuild
 npm run ios         # or: npm run android
 ```
 
-Full setup — HealthKit entitlements, Health Connect client, push certificates, pairing-code deep links — in [`mobile/README.md`](./mobile/README.md).
-
 ### 5. (Optional) Real phone calling
 
-You need a Twilio number plus a verified caller ID (trial accounts require this).
+Twilio + verified caller ID → register the number with ElevenLabs:
 
 ```bash
 cd backend && source .venv/bin/activate
-export $(grep -v '^#' .env | xargs)
+set -a && source .env && set +a
 python scripts/register_twilio_with_el.py +1XXXXXXXXXX "Sentinel Line"
 ```
 
@@ -221,107 +267,85 @@ Paste the printed `phone_number_id` into `ELEVENLABS_PHONE_NUMBER_ID`, set `DEMO
 
 ---
 
-## Mobile companion
+## Local Mongo without Docker (macOS arm64)
 
-The `mobile/` app is the patient-facing surface on iOS and Android, and the production path for vitals ingestion. Built with **Expo SDK 52 + Expo Router** and typed end-to-end against the locked [backend contract](./docs/backend-contract.md).
+If Homebrew is blocked (outdated Xcode) and Docker isn't available, use the Mongo tarball directly:
 
-Features:
+```bash
+curl -fsSL -o /tmp/mongo.tgz https://fastdl.mongodb.org/osx/mongodb-macos-arm64-8.0.4.tgz
+mkdir -p /tmp/mongo && tar -xzf /tmp/mongo.tgz -C /tmp/mongo
+mkdir -p /tmp/mongo-data
+/tmp/mongo/mongodb-macos-aarch64-8.0.4/bin/mongod --dbpath /tmp/mongo-data --bind_ip 127.0.0.1 --port 27017 &
+```
 
-- **Secure pairing**: 6-digit code or `sentinel://pair/<code>` deep link, device-scoped HS256 JWT persisted in `expo-secure-store`.
-- **Background vitals sync**: `expo-background-fetch` + `expo-task-manager` every ~15 min. `POST /api/vitals/batch` is idempotent, clock-skew aware, and resumes from a server-held cursor across app kills.
-- **Live dashboard**: SSE attaches in foreground; shows latest check-in, deterioration trajectory, plain-language AI summary of the most recent call, and a KPI strip (status / stream / sync / calls).
-- **Incoming-call ring**: Expo push → heads-up notification → tap to launch the in-app call screen (LiveKit + ElevenLabs).
-- **Web preview**: `expo start --web` mounts the same UI in a browser — handy for quick design iteration without a device.
-
-Design tokens mirror the web dashboard's Tailwind palette so a clinician switching between the `/admin` dashboard and the patient's phone sees one coherent surface. Glass surfaces are pre-tinted in `accent-400` to recreate the web's `backdrop-filter: saturate(155%)` frost on platforms that don't support backdrop filters natively.
+Point `MONGO_URI=mongodb://localhost:27017` in `backend/.env`.
 
 ---
 
-## Repository layout
+## API surface
 
-```
-sentinel-live/
-├── backend/                       # FastAPI service
-│   ├── sentinel/
-│   │   ├── api.py                 # REST + SSE routes
-│   │   ├── main.py                # app factory, CORS, lifespan
-│   │   ├── config.py              # pydantic-settings
-│   │   ├── db.py                  # Motor client + index bootstrap
-│   │   ├── models.py              # Pydantic domain models
-│   │   ├── scheduler.py           # APScheduler: calls, finalize, audit
-│   │   ├── scoring.py             # Gemini function-calling + vitals fusion
-│   │   ├── summarization.py       # summary_patient / summary_nurse
-│   │   ├── finalize.py            # post-call finalize pipeline
-│   │   ├── audio_features.py     # openSMILE + rules-only fallback
-│   │   ├── escalation.py          # policy table + Twilio SMS + SSE publish
-│   │   ├── push.py                # Expo push delivery
-│   │   ├── webhooks.py            # ElevenLabs / Twilio inbound
-│   │   ├── call_handler.py       # outbound dialing
-│   │   ├── events.py              # in-process pub/sub
-│   │   ├── pairing.py             # 6-digit code pairing
-│   │   ├── vitals.py              # wearable ingestion + idempotency
-│   │   ├── auth.py                # device JWT
-│   │   ├── web_auth.py            # admin/patient dashboard session
-│   │   ├── watchdog.py            # dead-man's-switch audit
-│   │   ├── outcomes.py            # outcome labelling
-│   │   └── seed.py / named_seed.py / demo_runner.py / replay.py
-│   ├── tests/                     # pytest + mongomock-motor
-│   └── scripts/register_twilio_with_el.py
-├── frontend/                      # Next.js 14 App Router
-│   ├── app/
-│   │   ├── admin/                 # clinician dashboard
-│   │   ├── patient/               # patient web fallback
-│   │   ├── patients/[id]/         # clinician deep-dive
-│   │   └── login/
-│   ├── components/
-│   │   ├── shell/  dashboard/  patient/  admin/  ui/
-│   ├── lib/
-│   │   ├── api.ts  format.ts  latestScoredCall.ts  patientQuery.ts
-│   │   └── hooks/  (useEventStream, usePolling)
-│   └── middleware.ts              # auth-gate /admin + /patient
-├── mobile/                        # Expo dev client
-│   ├── app/                       # (onboarding), (main), _layout
-│   ├── src/
-│   │   ├── api/      # typed client, CallRecord incl. summary_patient
-│   │   ├── auth/     # SecureStore + localStorage shim for web preview
-│   │   ├── components/
-│   │   ├── health/   # HealthKit + Health Connect adapters
-│   │   ├── sync/     # background task + cursor
-│   │   ├── realtime/ # SSE hook
-│   │   └── notifications/
-│   └── plugins/with-health-connect-delegate.js
-├── docs/
-│   ├── RUNBOOK.md                 # operational playbook
-│   ├── backend-contract.md        # mobile ↔ backend wire contract (v1)
-│   └── curl-smoke.sh              # 8-step end-to-end contract test
-├── demo/
-│   ├── scripts/*.txt              # transcripts for offline replay
-│   └── audio/*.wav                # placeholder recordings
-├── render.yaml                    # one-click Render deploy blueprint
-└── README.md
-```
+Routes prefixed with `/api`.
+
+### Read
+
+| Route | Purpose |
+|---|---|
+| `GET /api/health` | `{ok, mongo_ok, llm_ready, uptime_s}`. |
+| `GET /api/patients` | Patient list. |
+| `GET /api/patients/with-summary` | Patient list + last-10 score series + latest outcome (one round-trip; replaces N+1). |
+| `GET /api/patients/{id}` | Patient detail. |
+| `GET /api/patients/{id}/calls` | Call history. |
+| `GET /api/patients/{id}/vitals?hours=N` | Vitals series. |
+| `GET /api/stream` | Server-Sent Events for `hello`, `pending_call`, `call_completed`, `call_scored`, `alert`, `alert_opened`, `alert_ack`, `vitals`. |
+| `GET /api/alerts` / `GET /api/alerts/open-count` | Alert feed + KPI. |
+
+### Write
+
+| Route | Purpose |
+|---|---|
+| `POST /api/calls/trigger` | Admin "Call now". Emits `pending_call` + Expo push; in phone mode dials via Twilio. |
+| `POST /api/calls/widget-end` | Web-fallback end: insert pre-scored call, **return immediately** with `{background: true}`, finalize + summarize in a strong-ref'd background task. |
+| `POST /api/calls/finalize` | Webhook-driven finalize. |
+| `POST /api/vitals/batch` | Idempotent wearable ingestion (device JWT, clock-skew aware). |
+| `POST /api/devices/push-token` | Mobile push-token registration. |
+| `POST /api/patients` | Enroll patient (idempotent for supplied `patient_id`). |
+| `POST /api/pairing/code` | Generate 6-digit code. |
+| `POST /api/pairing/exchange` | Exchange code → device JWT. 429 after 5 bad attempts per code. |
+| `POST /api/demo/run` | Seed 3 demo trajectories. Rate-limited 3/min/IP. |
+| `POST /api/demo/seed-vitals` | Seed deteriorating HR/SpO₂/RR/temp for a patient. Rate-limited 10/min/IP. |
+
+### Auth
+
+| Route | Purpose |
+|---|---|
+| `POST /api/auth/login` | Dashboard passkey login, sets `sentinel_session` cookie. |
+| `POST /api/auth/logout` | Clears session cookie. |
+| `GET /api/auth/me` | `{role, patient_id?}`. |
+
+All passkey compares are constant-time (`hmac.compare_digest`). Session cookies enforce `Secure` on HTTPS origins and carry a 14-day server-side age check.
 
 ---
 
-## Deploy
+## SSE event vocabulary
 
-### Render (one-click)
+```
+hello                                         # connect
+pending_call      {patient_id, mode, at}      # ring patient
+call_completed    {call_id, patient_id,       # fires TWICE per widget-end:
+                    outcome_label,            #  once immediately with null summaries,
+                    escalation_911,           #  then again when summaries resolve
+                    summary_patient|null,
+                    summary_nurse|null}
+call_scored       {call_id, patient_id,       # Gemini function-call landed
+                    score, at}
+alert             {patient_id, call_id,       # escalation fired
+                    severity, summary, at}
+alert_opened / alert_ack                      # admin side-effects
+vitals            {patient_id, device_id,     # batch accepted
+                    accepted, at}
+```
 
-1. Push this repo to GitHub.
-2. On [render.com](https://render.com) → **New Blueprint Instance** → connect the repo.
-3. Render reads `render.yaml` and provisions `sentinel-api` (Docker) + `sentinel-ui` (Node) on the free tier.
-4. Paste the secrets when prompted.
-5. After the first deploy, set `PUBLIC_BASE_URL=https://sentinel-api.onrender.com` on the API service. That triggers one last redeploy.
-
-Free-tier services sleep after 15 min idle — keep an UptimeRobot ping pointed at `/api/patients` in production.
-
-### Anywhere else
-
-- **API**: plain `uvicorn sentinel.main:app`. Any container or VM works. Bring your own Mongo.
-- **UI**: plain `next start` after `next build`. Any Node host works.
-- **Mobile**: EAS Build for TestFlight / Play Store (`eas.json` already configured).
-
-See [`docs/RUNBOOK.md`](./docs/RUNBOOK.md) for the full operational playbook, including ngrok for live-call demos, Twilio registration, and the webhook URLs ElevenLabs needs.
+SSE responses include a 4 KB `: padding` prelude so iOS Safari's internal buffer flushes the first event immediately. `X-Accel-Buffering: no` + `Cache-Control: no-transform` are set to keep intermediate proxies honest.
 
 ---
 
@@ -330,16 +354,105 @@ See [`docs/RUNBOOK.md`](./docs/RUNBOOK.md) for the full operational playbook, in
 ```bash
 # backend
 cd backend && source .venv/bin/activate
-pytest                                    # unit + integration (mongomock-motor)
+pytest                                    # 117 tests
 
 # frontend
-cd frontend && npm run build && npm run lint
+cd frontend && npx tsc --noEmit && npm run build
 
 # mobile
 cd mobile && npx tsc --noEmit && npm test
+```
 
-# end-to-end mobile ↔ backend smoke
-./docs/curl-smoke.sh http://localhost:8000
+End-to-end smoke against a running stack:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/health
+curl -s -X POST http://localhost:8000/api/calls/trigger \
+     -H "content-type: application/json" \
+     -d '{"patient_id":"<uuid>"}'
+```
+
+---
+
+## Performance
+
+- **Widget-end → dashboard score**: < 100 ms (immediate `call_completed` with null summaries).
+- **Widget-end → dashboard summary**: ~2–3 s (OpenRouter call, parallel patient + nurse summary via `asyncio.gather`).
+- **Patient grid load**: 1 aggregation query (`/api/patients/with-summary`) vs. the prior N+1 pattern.
+- **Background finalize**: strong-ref task set so the bg task is not GC'd mid-flight — a bug that previously orphaned occasional calls.
+
+---
+
+## Structure
+
+```
+sentinel-live/
+├── backend/                       # FastAPI service
+│   ├── sentinel/
+│   │   ├── api.py                 # REST + SSE routes, rate limiter, bg-task registry
+│   │   ├── main.py                # app factory, lifespan, access-log middleware, /api/health
+│   │   ├── config.py              # pydantic-settings
+│   │   ├── db.py                  # Motor client + index bootstrap (race-safe)
+│   │   ├── models.py              # Pydantic v2 domain models
+│   │   ├── scheduler.py           # APScheduler jobs (UTC-pinned)
+│   │   ├── scoring.py             # OpenRouter-first LLM + Gemini fallback + openSMILE + cohort vector search
+│   │   ├── summarization.py       # summary_patient / summary_nurse via OpenRouter (placeholder-guarded prompts)
+│   │   ├── finalize.py            # post-call finalize (parallel summaries, atomic ended_at)
+│   │   ├── audio_features.py      # openSMILE eGeMAPS + rules-only fallback
+│   │   ├── escalation.py          # policy + Twilio SMS + SSE publish
+│   │   ├── push.py                # Expo push (dedup, retry, rate-limited)
+│   │   ├── webhooks.py            # ElevenLabs / Twilio inbound (HMAC verify, 1 MiB cap)
+│   │   ├── call_handler.py        # outbound dialing (async, non-blocking EL SDK)
+│   │   ├── events.py              # in-process SSE pub/sub (iOS-Safari padding, keepalive)
+│   │   ├── pairing.py             # 6-digit code pairing (brute-force lockout)
+│   │   ├── vitals.py              # wearable ingestion + idempotency + clock skew
+│   │   ├── auth.py                # device JWT (constant-time compare)
+│   │   ├── web_auth.py            # dashboard sessions (Secure cookie on HTTPS)
+│   │   ├── watchdog.py            # dead-man's-switch audit
+│   │   ├── outcomes.py            # outcome labelling
+│   │   ├── demo_vitals.py         # seed sepsis/mild trajectories
+│   │   └── seed.py / named_seed.py / demo_runner.py / replay.py
+│   ├── tests/                     # pytest + mongomock-motor
+│   └── scripts/register_twilio_with_el.py
+├── frontend/                      # Next.js 14 App Router
+│   ├── app/
+│   │   ├── admin/                 # clinician dashboard (KPI strip + patient grid)
+│   │   ├── patient/               # patient web surface (iOS-polished)
+│   │   ├── patients/[id]/         # clinician deep-dive
+│   │   ├── login/                 # role-picker
+│   │   ├── diag/                  # SSE debug page
+│   │   ├── not-found.tsx  error.tsx  global-error.tsx  loading.tsx
+│   │   └── layout.tsx             # PWA manifest, viewport, safe-area
+│   ├── components/
+│   │   ├── shell/  dashboard/  patient/  admin/  ui/
+│   │   └── patient/PatientLiveView.tsx   # widget mount with customElements guard + mic primer + audio-unlock
+│   ├── lib/
+│   │   ├── api.ts  format.ts  latestScoredCall.ts  patientQuery.ts
+│   │   └── hooks/  (useEventStream, usePolling)
+│   ├── public/
+│   │   ├── manifest.webmanifest  icon.svg  apple-touch-icon.svg
+│   └── middleware.ts              # auth-gate /admin + /patient
+├── mobile/                        # Expo dev client
+│   ├── app/                       # (onboarding), (main), _layout (deep-link pairing)
+│   ├── src/
+│   │   ├── api/      # typed client incl. summary_patient
+│   │   ├── auth/     # SecureStore + localStorage shim for web preview
+│   │   ├── components/
+│   │   ├── health/   # HealthKit + Health Connect adapters
+│   │   ├── sync/     # background task + cursor + clock-skew detection
+│   │   ├── realtime/ # SSE hook
+│   │   └── notifications/   # push token (retry w/ backoff)
+│   └── plugins/with-health-connect-delegate.js
+├── docs/
+│   ├── RUNBOOK.md                 # operational playbook
+│   ├── backend-contract.md        # mobile ↔ backend wire contract (v1)
+│   └── curl-smoke.sh              # end-to-end contract test
+├── demo/
+│   ├── scripts/*.txt              # transcripts for offline replay
+│   └── audio/*.wav                # placeholder recordings
+├── certs/                         # mkcert-generated (gitignored in practice)
+├── render.yaml                    # one-click Render deploy blueprint
+└── README.md
 ```
 
 ---
@@ -354,4 +467,4 @@ Clinical rubrics are grounded in published scores (qSOFA, NEWS2, ACS NSQIP post-
 
 ## License
 
-MIT. Copy, fork, ship. See `LICENSE` if a formal file is needed.
+MIT. Copy, fork, ship.

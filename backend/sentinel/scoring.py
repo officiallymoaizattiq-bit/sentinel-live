@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime, timezone
-from typing import Protocol
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any, Protocol
 from uuid import uuid4
 
-import google.generativeai as genai
+import httpx
 
+from sentinel import events as event_bus
 from sentinel.audio_features import rules_only_score
 from sentinel.config import get_settings
 from sentinel.db import get_db
@@ -18,7 +21,10 @@ from sentinel.models import (
     TranscriptTurn,
 )
 
+log = logging.getLogger("sentinel.scoring")
+
 _EMBED_DIM = 768  # text-embedding-004
+_HTTP_TIMEOUT_S = 30.0
 
 RUBRIC = """You are a post-operative abdominal-surgery monitoring assistant.
 Given a phone check-in transcript plus voice biomarkers plus prior call history,
@@ -37,7 +43,6 @@ async def _summarize_recent_vitals(
     Returns a compact dict suitable for JSON-embedding into the Gemini prompt
     and for persistence on the call doc.
     """
-    from datetime import datetime, timedelta, timezone
     cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=window_hours)
     cur = (
         get_db()
@@ -51,7 +56,9 @@ async def _summarize_recent_vitals(
         count += 1
         kind = d["kind"]
         val = d["value"]
-        latest[kind] = (d["t"].isoformat() if hasattr(d["t"], "isoformat") else str(d["t"]), val)
+        t = d.get("t")
+        t_iso = t.isoformat() if hasattr(t, "isoformat") else str(t)
+        latest[kind] = (t_iso, val)
         if isinstance(val, (int, float)):
             buckets.setdefault(kind, []).append(float(val))
 
@@ -59,21 +66,23 @@ async def _summarize_recent_vitals(
         if not vals:
             return {}
         s = sorted(vals)
+        n = len(s)
+        mid = n // 2
+        median = s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
         return {
-            "n": len(vals),
+            "n": n,
             "min": s[0],
             "max": s[-1],
-            "mean": sum(vals) / len(vals),
-            "median": s[len(s) // 2],
+            "mean": sum(vals) / n,
+            "median": median,
         }
 
-    summary: dict = {
+    return {
         "window_hours": window_hours,
         "sample_count": count,
         "stats": {k: agg(v) for k, v in buckets.items()},
         "latest": {k: {"t": t, "value": v} for k, (t, v) in latest.items()},
     }
-    return summary
 
 
 class LLM(Protocol):
@@ -82,50 +91,167 @@ class LLM(Protocol):
     async def embed(self, text: str) -> list[float]: ...
 
 
+# JSON-schema emitted via OpenAI-compatible "tools" field (OpenRouter) or
+# Gemini native "function_declarations" (google-generativeai).
+_EMIT_SCORE_PARAMS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "deterioration": {"type": "number"},
+        "qsofa": {"type": "integer"},
+        "news2": {"type": "integer"},
+        "red_flags": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string"},
+        "recommended_action": {
+            "type": "string",
+            "enum": [a.value for a in RecommendedAction],
+        },
+    },
+    "required": [
+        "deterioration", "qsofa", "news2",
+        "red_flags", "summary", "recommended_action",
+    ],
+}
+
 _EMIT_SCORE_TOOL = {
     "function_declarations": [{
         "name": "emit_score",
         "description": "Emit deterioration score.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "deterioration": {"type": "number"},
-                "qsofa": {"type": "integer"},
-                "news2": {"type": "integer"},
-                "red_flags": {"type": "array", "items": {"type": "string"}},
-                "summary": {"type": "string"},
-                "recommended_action": {
-                    "type": "string",
-                    "enum": [a.value for a in RecommendedAction],
-                },
-            },
-            "required": [
-                "deterioration", "qsofa", "news2",
-                "red_flags", "summary", "recommended_action",
-            ],
-        },
+        "parameters": _EMIT_SCORE_PARAMS,
     }],
 }
 
+_OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def _score_from_args(args: dict[str, Any]) -> Score:
+    args = dict(args)
+    args["recommended_action"] = RecommendedAction(args["recommended_action"])
+    return Score(**args)
+
+
+async def _openrouter_score(*, user_payload: str, api_key: str, model: str) -> Score:
+    """Function-call scoring via OpenRouter (OpenAI-compatible tools API)."""
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": RUBRIC},
+            {"role": "user", "content": user_payload},
+        ],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "emit_score",
+                "description": "Emit deterioration score.",
+                "parameters": _EMIT_SCORE_PARAMS,
+            },
+        }],
+        "tool_choice": {"type": "function", "function": {"name": "emit_score"}},
+    }
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_S) as client:
+        r = await client.post(
+            _OPENROUTER_CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://sentinel.local",
+                "X-Title": "Sentinel",
+            },
+            json=body,
+        )
+        r.raise_for_status()
+        data = r.json()
+    try:
+        choice = data["choices"][0]
+        tool_calls = choice["message"].get("tool_calls") or []
+        for tc in tool_calls:
+            fn = tc.get("function") or {}
+            if fn.get("name") == "emit_score":
+                raw = fn.get("arguments") or "{}"
+                args = json.loads(raw) if isinstance(raw, str) else dict(raw)
+                return _score_from_args(args)
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"OpenRouter returned malformed tool call: {e}") from e
+    raise RuntimeError("OpenRouter did not emit_score")
+
+
+async def _openrouter_embed(*, text: str, api_key: str) -> list[float]:
+    """Embeddings via OpenRouter (OpenAI-compatible /embeddings).
+
+    We prefix the embed model with ``google/`` so OpenRouter routes it through
+    Google's backend with the same API key. Falls back to Gemini-direct when
+    OpenRouter does not have embeddings available for the caller.
+    """
+    body = {
+        "model": "google/text-embedding-004",
+        "input": text,
+    }
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_S) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://sentinel.local",
+                "X-Title": "Sentinel",
+            },
+            json=body,
+        )
+        r.raise_for_status()
+        data = r.json()
+    try:
+        return list(data["data"][0]["embedding"])
+    except (KeyError, IndexError, TypeError) as e:
+        raise RuntimeError(f"OpenRouter returned malformed embedding: {e}") from e
+
+
+async def _gemini_direct_score(*, user_payload: str, api_key: str, model: str) -> Score:
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    m = genai.GenerativeModel(
+        model,
+        tools=[_EMIT_SCORE_TOOL],
+        system_instruction=RUBRIC,
+    )
+    resp = await asyncio.wait_for(
+        m.generate_content_async(user_payload), timeout=_HTTP_TIMEOUT_S,
+    )
+    for part in resp.candidates[0].content.parts:
+        fc = getattr(part, "function_call", None)
+        if fc and fc.name == "emit_score":
+            return _score_from_args(dict(fc.args))
+    raise RuntimeError("Gemini did not emit_score")
+
+
+async def _gemini_direct_embed(*, text: str, api_key: str, model: str) -> list[float]:
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    r = await asyncio.wait_for(
+        genai.embed_content_async(model=model, content=text),
+        timeout=_HTTP_TIMEOUT_S,
+    )
+    return r["embedding"]
+
 
 class GeminiLLM:
-    """Scoring LLM backed by Google Gemini (function-calling for the
-    structured `emit_score` tool, `text-embedding-004` for embeddings).
+    """Scoring LLM. Name retained for API compatibility; transport routes
+    through OpenRouter when ``OPENROUTER_API_KEY`` is set (preferred), with
+    a Gemini-direct fallback. Public method signatures are stable:
+    ``score(...)`` and ``embed(text)``.
     """
 
     def __init__(self) -> None:
         s = get_settings()
-        if not s.gemini_api_key:
+        if not s.openrouter_api_key and not s.gemini_api_key:
             raise RuntimeError(
-                "gemini_api_key is empty — set GEMINI_API_KEY in backend/.env"
+                "No LLM key configured - set OPENROUTER_API_KEY or GEMINI_API_KEY in backend/.env"
             )
-        genai.configure(api_key=s.gemini_api_key)
-        self._model = genai.GenerativeModel(
-            s.gemini_model,
-            tools=[_EMIT_SCORE_TOOL],
-            system_instruction=RUBRIC,
-        )
-        self._embed_model = s.gemini_embed_model
+        self._openrouter_key = s.openrouter_api_key
+        self._openrouter_model = s.openrouter_model
+        self._gemini_key = s.gemini_api_key
+        self._gemini_model = s.gemini_model
+        self._gemini_embed_model = s.gemini_embed_model
 
     async def score(self, *, transcript, features, drift, history, rubric, vitals) -> Score:
         user = json.dumps({
@@ -135,18 +261,40 @@ class GeminiLLM:
             "history_last_3_calls": history,
             "vitals_last_2h": vitals,
         })
-        resp = await self._model.generate_content_async(user)
-        for part in resp.candidates[0].content.parts:
-            fc = getattr(part, "function_call", None)
-            if fc and fc.name == "emit_score":
-                args = dict(fc.args)
-                args["recommended_action"] = RecommendedAction(args["recommended_action"])
-                return Score(**args)
-        raise RuntimeError("Gemini did not emit_score")
+        if self._openrouter_key:
+            try:
+                return await _openrouter_score(
+                    user_payload=user,
+                    api_key=self._openrouter_key,
+                    model=self._openrouter_model,
+                )
+            except Exception as e:
+                if not self._gemini_key:
+                    raise
+                log.warning(
+                    "OpenRouter scoring failed (%s); falling back to Gemini-direct", e,
+                )
+        return await _gemini_direct_score(
+            user_payload=user,
+            api_key=self._gemini_key,
+            model=self._gemini_model,
+        )
 
     async def embed(self, text: str) -> list[float]:
-        r = await genai.embed_content_async(model=self._embed_model, content=text)
-        return r["embedding"]
+        if self._openrouter_key:
+            try:
+                return await _openrouter_embed(
+                    text=text, api_key=self._openrouter_key,
+                )
+            except Exception as e:
+                if not self._gemini_key:
+                    raise
+                log.warning(
+                    "OpenRouter embed failed (%s); falling back to Gemini-direct", e,
+                )
+        return await _gemini_direct_embed(
+            text=text, api_key=self._gemini_key, model=self._gemini_embed_model,
+        )
 
 
 async def _last_3_calls(patient_id: str) -> list[dict]:
@@ -158,8 +306,9 @@ async def _last_3_calls(patient_id: str) -> list[dict]:
     )
     out: list[dict] = []
     async for d in cur:
+        called_at = d.get("called_at")
         out.append({
-            "called_at": d.get("called_at").isoformat() if d.get("called_at") else None,
+            "called_at": called_at.isoformat() if hasattr(called_at, "isoformat") else None,
             "score": d.get("score"),
             "summary": (d.get("score") or {}).get("summary"),
         })
@@ -167,6 +316,10 @@ async def _last_3_calls(patient_id: str) -> list[dict]:
 
 
 async def _vector_search(embedding: list[float], k: int = 3) -> list[SimilarCall]:
+    # Skip lookup when embedding is the zero-vector fallback; result is
+    # meaningless (all dot products are 0) and we'd scan the whole cohort.
+    if not any(embedding):
+        return []
     db = get_db()
     try:
         pipeline = [{
@@ -185,11 +338,18 @@ async def _vector_search(embedding: list[float], k: int = 3) -> list[SimilarCall
                         outcome=d["outcome"])
             async for d in cur
         ]
-    except Exception:
-        def dot(a, b): return sum(x * y for x, y in zip(a, b))
+    except Exception as e:
+        log.warning("vectorSearch unavailable, using dot-product fallback: %s", e)
+
+        def dot(a, b):
+            return sum(x * y for x, y in zip(a, b))
+
         scored: list[tuple[float, dict]] = []
         async for d in db.cohort_outcomes.find({}):
-            scored.append((dot(embedding, d["embedding"]), d))
+            emb = d.get("embedding")
+            if not emb:
+                continue
+            scored.append((dot(embedding, emb), d))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [
             SimilarCall(case_id=d["case_id"], similarity=s, outcome=d["outcome"])
@@ -214,23 +374,26 @@ async def score_call(
             history=history, rubric=RUBRIC,
             vitals=vitals_summary,
         )
-    except Exception:
+    except Exception as e:
+        log.warning("LLM scoring failed, falling back to rules: %s", e)
         score = rules_only_score(features=features, drift=drift)
         llm_degraded = True
 
     transcript_text = "\n".join(f"{t.role}: {t.text}" for t in transcript)
     try:
         embedding = await llm.embed(transcript_text or score.summary)
-    except Exception:
+    except Exception as e:
+        log.warning("LLM embedding failed, using zero-vector: %s", e)
         embedding = [0.0] * _EMBED_DIM
 
     similar = await _vector_search(embedding)
 
     call_id = str(uuid4())
+    now = datetime.now(tz=timezone.utc)
     await get_db().calls.insert_one({
         "_id": call_id,
         "patient_id": patient_id,
-        "called_at": datetime.now(tz=timezone.utc),
+        "called_at": now,
         "duration_s": max((t.t_end for t in transcript), default=0.0),
         "transcript": [t.model_dump() for t in transcript],
         "audio_url": None,
@@ -244,12 +407,11 @@ async def score_call(
         "short_call": len(transcript) < 3,
         "vitals_summary": vitals_summary,
     })
-    from sentinel import events as event_bus
     event_bus.publish({
         "type": "call_scored",
         "call_id": call_id,
         "patient_id": patient_id,
-        "score": score.model_dump(mode="json") if hasattr(score, "model_dump") else score,
-        "at": datetime.now(tz=timezone.utc).isoformat(),
+        "score": score.model_dump(mode="json"),
+        "at": now.isoformat(),
     })
     return call_id

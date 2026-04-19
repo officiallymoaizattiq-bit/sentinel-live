@@ -137,10 +137,3 @@ export function serializePatientQuery(p: PatientListParams): string {
   for (const s of p.severity ?? []) u.append("severity", s);
   return u.toString();
 }
-
-export function mergePatientQueryPatch(
-  current: PatientListParams,
-  patch: Partial<PatientListParams>
-): PatientListParams {
-  return { ...current, ...patch };
-}

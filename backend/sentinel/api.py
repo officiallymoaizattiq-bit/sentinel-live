@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import logging
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
-    Body,
     Depends,
     Form,
     Header,
     HTTPException,
     Path,
     Query,
+    Request,
     Response,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from pydantic import BaseModel as _PM
 from twilio.twiml.voice_response import VoiceResponse as TwilioVoiceResponse
 
 from sentinel import enrollment
@@ -25,11 +28,58 @@ from sentinel import pairing as pairing_mod
 from sentinel import vitals as vitals_mod
 from sentinel.auth import require_device_token
 from sentinel.call_handler import build_check_in_twiml
+from sentinel.demo_runner import run_trajectory_demo
 from sentinel.db import get_db
 from sentinel.models import Caregiver, Consent, SurgeryType
 from sentinel.summarization import summarize_nurse, summarize_patient
 
+log = logging.getLogger("sentinel.api")
+
 router = APIRouter(prefix="/api")
+
+
+# ---------------------------------------------------------------------------
+# Simple in-process rate limiter for demo-mode routes. Protects the
+# expensive ``/demo/run`` (seeds 3 trajectories, 9 scored calls) and
+# ``/demo/seed-vitals`` (writes many vitals rows) from accidental loops.
+# Burst limit per client IP; sliding 60s window.
+# ---------------------------------------------------------------------------
+
+_RATE_BUCKETS: dict[str, list[float]] = defaultdict(list)
+_RATE_WINDOW_S = 60.0
+
+# Strong refs to background tasks so they aren't GC'd mid-flight.
+_BG_TASKS: set[Any] = set()
+
+
+def _spawn_bg(coro: Any) -> None:
+    import asyncio as _a
+    t = _a.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+
+
+def _rate_limit(request: Request, *, key: str, limit: int) -> None:
+    ip = (request.client.host if request.client else "unknown") or "unknown"
+    bucket_key = f"{key}:{ip}"
+    now = time.monotonic()
+    hits = _RATE_BUCKETS[bucket_key]
+    cutoff = now - _RATE_WINDOW_S
+    # Drop expired
+    while hits and hits[0] < cutoff:
+        hits.pop(0)
+    if len(hits) >= limit:
+        retry_after = max(1, int(_RATE_WINDOW_S - (now - hits[0])))
+        raise HTTPException(
+            429,
+            {
+                "error": "rate_limited",
+                "retry_after_s": retry_after,
+                "limit": limit,
+                "window_s": int(_RATE_WINDOW_S),
+            },
+        )
+    hits.append(now)
 
 
 class EnrollRequest(BaseModel):
@@ -75,6 +125,100 @@ async def list_patients():
             "call_count": d.get("call_count", 0),
             "discharge_date": dd.isoformat() if dd else None,
         })
+    return out
+
+
+@router.get("/patients/with-summary")
+async def list_patients_with_summary():
+    """Aggregated patient list + last-scored-call summary in one round-trip.
+
+    Replaces the N+1 pattern where the dashboard fetches ``/api/patients`` and
+    then one ``/api/patients/{pid}/calls`` per patient. Lets clients render the
+    grid from a single request.
+
+    Output shape (per row): same fields as /api/patients plus::
+
+        last_deterioration: float | None
+        last_called_at: iso str | None
+        last_outcome_label: str | None
+        escalation_911: bool
+        score_series: list[float]   # up to 10 scored calls, oldest->newest
+
+    Sort by ``called_at`` ascending so ``score_series`` is chronological and
+    the last element is the most recent scored call.
+    """
+    db = get_db()
+    # Single aggregation: left-join every patient's scored calls, project the
+    # last 10 by called_at asc, then fold down to the series + latest fields.
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "calls",
+                "let": {"pid": "$_id"},
+                "pipeline": [
+                    {"$match": {
+                        "$expr": {"$eq": ["$patient_id", "$$pid"]},
+                        "score": {"$ne": None},
+                    }},
+                    {"$sort": {"called_at": 1}},
+                    {"$project": {
+                        "_id": 0,
+                        "called_at": 1,
+                        "deterioration": "$score.deterioration",
+                        "outcome_label": 1,
+                        "escalation_911": 1,
+                    }},
+                ],
+                "as": "_calls",
+            },
+        },
+    ]
+    out: list[dict[str, Any]] = []
+    try:
+        async for d in db.patients.aggregate(pipeline):
+            calls = d.get("_calls") or []
+            # Keep the last 10 scored calls, drop anything missing a det.
+            recent = [c for c in calls if c.get("deterioration") is not None][-10:]
+            series = [float(c["deterioration"]) for c in recent]
+            latest = recent[-1] if recent else None
+            last_called = (calls[-1].get("called_at") if calls else None)
+            dd = d.get("discharge_date")
+            out.append({
+                "id": d["_id"],
+                "name": d["name"],
+                "surgery_type": d["surgery_type"],
+                "next_call_at": d.get("next_call_at"),
+                "call_count": d.get("call_count", 0),
+                "discharge_date": dd.isoformat() if dd else None,
+                "last_deterioration": (
+                    float(latest["deterioration"]) if latest else None
+                ),
+                "last_called_at": (
+                    last_called.isoformat() if hasattr(last_called, "isoformat") else last_called
+                ),
+                "last_outcome_label": (latest.get("outcome_label") if latest else None),
+                "escalation_911": bool(latest.get("escalation_911")) if latest else False,
+                "score_series": series,
+            })
+    except Exception:
+        log.exception("patients/with-summary aggregation failed; returning base list")
+        # Safe fallback so the UI isn't blocked by a mongo version that doesn't
+        # support $lookup-with-pipeline (e.g. older shared-tier).
+        async for d in db.patients.find({}):
+            dd = d.get("discharge_date")
+            out.append({
+                "id": d["_id"],
+                "name": d["name"],
+                "surgery_type": d["surgery_type"],
+                "next_call_at": d.get("next_call_at"),
+                "call_count": d.get("call_count", 0),
+                "discharge_date": dd.isoformat() if dd else None,
+                "last_deterioration": None,
+                "last_called_at": None,
+                "last_outcome_label": None,
+                "escalation_911": False,
+                "score_series": [],
+            })
     return out
 
 
@@ -201,7 +345,6 @@ class WidgetEndBody(BaseModel):
 
 @router.post("/calls/widget-end")
 async def widget_end_call(body: WidgetEndBody):
-    from uuid import uuid4
     from sentinel.finalize import finalize_call
 
     db = get_db()
@@ -239,12 +382,30 @@ async def widget_end_call(body: WidgetEndBody):
         "audio_degraded": False,
         "short_call": False,
     })
-    result = await finalize_call(
-        conversation_id=conv_id,
-        transcript=transcript_text,
-        end_reason="manual",
+    # Fire immediate call_completed so the dashboard updates instantly with
+    # score; background finalize fills summaries and publishes another
+    # call_completed when ready.
+    event_bus.publish(
+        {
+            "type": "call_completed",
+            "call_id": call_id,
+            "patient_id": body.patient_id,
+            "outcome_label": "fine" if det < 0.3 else (
+                "escalated_911" if action == "suggest_911" else "schedule_visit"
+            ),
+            "escalation_911": action == "suggest_911",
+            "summary_patient": None,
+            "summary_nurse": None,
+        }
     )
-    return {"call_id": call_id, **result}
+    _spawn_bg(
+        finalize_call(
+            conversation_id=conv_id,
+            transcript=transcript_text,
+            end_reason="manual",
+        )
+    )
+    return {"call_id": call_id, "background": True}
 
 
 @router.get("/calls/twiml")
@@ -260,12 +421,11 @@ async def twiml_for_call(patient_id: str):
 
 @router.post("/calls/gather")
 async def twiml_gather(patient_id: str, SpeechResult: str = Form("")):
-    from uuid import uuid4
     call_id = str(uuid4())
     await get_db().calls.insert_one({
         "_id": call_id,
         "patient_id": patient_id,
-        "called_at": datetime.utcnow(),
+        "called_at": datetime.now(tz=timezone.utc),
         "transcript": [
             {"role": "patient", "text": SpeechResult,
              "t_start": 0.0, "t_end": 10.0}
@@ -279,19 +439,18 @@ async def twiml_gather(patient_id: str, SpeechResult: str = Form("")):
     return Response(content=str(resp), media_type="application/xml")
 
 
-from sentinel.demo_runner import run_trajectory_demo
-
-
 @router.post("/demo/run")
-async def demo_run():
+async def demo_run(request: Request):
+    from sentinel.config import get_settings
+
+    if not get_settings().demo_mode:
+        raise HTTPException(403, {"error": "demo_mode_disabled"})
+    _rate_limit(request, key="demo_run", limit=3)
     pids = await run_trajectory_demo()
     return {"patient_ids": pids}
 
 
-from pydantic import BaseModel as _BM
-
-
-class TriggerCallBody(_BM):
+class TriggerCallBody(BaseModel):
     patient_id: str
 
 
@@ -337,7 +496,7 @@ async def trigger_call(body: TriggerCallBody):
 # ---------------------------------------------------------------------------
 
 
-class DevicePushTokenBody(_BM):
+class DevicePushTokenBody(BaseModel):
     token: str
     platform: str  # "ios" | "android"
     provider: str = "expo"  # "expo" today; reserved for raw fcm/apns later
@@ -366,7 +525,7 @@ async def devices_push_token(
     return {"ok": True}
 
 
-class FinalizeBody(_BM):
+class FinalizeBody(BaseModel):
     conversation_id: str
 
 
@@ -383,7 +542,7 @@ async def finalize(body: FinalizeBody):
     return {"call_id": new_id}
 
 
-class MobileEndBody(_BM):
+class MobileEndBody(BaseModel):
     conversation_id: str
 
 
@@ -472,7 +631,7 @@ async def create_pairing_code(pid: str = Path(...)):
     return await pairing_mod.generate_pairing_code(patient_id=pid)
 
 
-class PairExchangeBody(_PM):
+class PairExchangeBody(BaseModel):
     code: str
     device_info: dict[str, Any] = {}
 
@@ -482,7 +641,7 @@ async def pair_exchange(body: PairExchangeBody):
     return await pairing_mod.exchange_code(code=body.code, device_info=body.device_info)
 
 
-class MobileDemoLoginBody(_PM):
+class MobileDemoLoginBody(BaseModel):
     patient_id: str
     passkey: str
     device_info: dict[str, Any] = {}
@@ -505,7 +664,7 @@ async def revoke_device_route(device_id: str = Path(...)):
     await pairing_mod.revoke_device(device_id=device_id)
 
 
-class VitalsBatchBody(_PM):
+class VitalsBatchBody(BaseModel):
     patient_id: str
     device_id: str
     batch_id: str
@@ -527,10 +686,8 @@ async def vitals_batch(
         auth_patient_id=token_payload["pid"],
         auth_device_id=token_payload["sub"],
     )
-    import json
     status = 200 if result.get("idempotent_replay") else 202
-    return Response(content=json.dumps(result),
-                    media_type="application/json", status_code=status)
+    return JSONResponse(content=result, status_code=status)
 
 
 @router.get("/patients/{pid}/vitals")
@@ -578,13 +735,13 @@ async def patient_vitals(
 
 @router.get("/stream")
 async def stream_events():
-    q = event_bus.subscribe()
+    # Subscribe inside the generator so the queue is released deterministically
+    # when the client disconnects (generator's finally runs on close).
     return StreamingResponse(
-        event_bus.stream(q),
-        media_type="text/event-stream",
+        event_bus.stream(),
         headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
         },
     )
@@ -600,3 +757,38 @@ async def seed_named_route(clean: bool = True):
     from sentinel.named_seed import seed_named_patients
     pids = await seed_named_patients(clean=clean)
     return {"patient_ids": pids}
+
+
+class SeedVitalsBody(BaseModel):
+    patient_id: str
+    minutes_back: int = 45
+    variant: str = "sepsis"  # "mild" | "sepsis" | "reset"
+
+
+@router.post("/demo/seed-vitals")
+async def seed_vitals_route(body: SeedVitalsBody, request: Request):
+    """Web-based vitals simulator. Replaces the missing Android HealthKit /
+    Health Connect bridge so the Gemini scorer has a deteriorating trajectory
+    to reason over during the demo. Gated on ``settings.demo_mode``; no auth
+    (explicit demo endpoint, not exposed in prod).
+    """
+    from sentinel.config import get_settings
+    from sentinel.demo_vitals import seed_deteriorating_vitals
+
+    if not get_settings().demo_mode:
+        raise HTTPException(403, {"error": "demo_mode_disabled"})
+    _rate_limit(request, key="demo_seed_vitals", limit=10)
+
+    if body.variant not in {"mild", "sepsis", "reset"}:
+        raise HTTPException(400, {"error": "invalid_variant"})
+
+    try:
+        result = await seed_deteriorating_vitals(
+            db=get_db(),
+            patient_id=body.patient_id,
+            minutes_back=body.minutes_back,
+            variant=body.variant,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, **result}

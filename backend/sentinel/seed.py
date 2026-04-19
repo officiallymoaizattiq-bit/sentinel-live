@@ -22,15 +22,21 @@ def _det_embedding(case_id: str, dim: int = 1536) -> list[float]:
     return [x / n for x in v]
 
 
-async def seed_cohort(count: int = 20) -> None:
+async def seed_cohort(count: int = 20, *, seed: int | None = None) -> None:
+    """Seed cohort_outcomes with `count` synthetic cases.
+
+    Deterministic when `seed` is provided; otherwise uses a fresh RNG so that
+    parallel test runs don't interfere with each other via the global RNG.
+    """
+    rng = random.Random(seed)
     db = get_db()
     await db.cohort_outcomes.delete_many({})
     docs: list[dict] = []
     for _ in range(count):
         case_id = str(uuid4())
-        outcome = random.choice(_OUTCOMES)
-        day = random.randint(1, 14)
-        surgery = random.choice(_SURGERIES)
+        outcome = rng.choice(_OUTCOMES)
+        day = rng.randint(1, 14)
+        surgery = rng.choice(_SURGERIES)
         docs.append(
             {
                 "_id": case_id,

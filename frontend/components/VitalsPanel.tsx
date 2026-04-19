@@ -11,6 +11,8 @@ import {
   YAxis,
 } from "recharts";
 import { Glass } from "@/components/ui/Glass";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { VitalsPanelSkeleton } from "@/components/ui/Skeleton";
 
 type Vital = {
   t: string;
@@ -321,32 +323,57 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
 
   if (error) {
     return (
-      <Glass className="p-4 text-sm text-slate-400">
-        Vitals could not be loaded ({error})
-      </Glass>
+      <EmptyState
+        tone="muted"
+        title="Vitals could not be loaded"
+        description={`The wearable feed returned an error (${error}). It will retry automatically.`}
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
+            <path
+              d="M12 9v4m0 4h.01M10.3 3.3L2.3 17a2 2 0 001.7 3h16a2 2 0 001.7-3L13.7 3.3a2 2 0 00-3.4 0z"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        }
+      />
     );
   }
   if (vitals === null) {
-    return (
-      <Glass className="p-4 text-sm text-slate-400">Loading vitals…</Glass>
-    );
+    return <VitalsPanelSkeleton />;
   }
   const hasAnyLatest =
     latestByKind != null && Object.keys(latestByKind).length > 0;
   if (vitals.length === 0 && !hasAnyLatest) {
     return (
-      <Glass className="p-6 text-center text-sm text-slate-400">
-        No vitals in this window. Pair a wearable via the mobile app to stream
-        data here.
-      </Glass>
+      <EmptyState
+        tone="muted"
+        title="No wearable data yet"
+        description="Pair a wearable from the mobile app to stream heart rate, SpO₂, and activity into this view."
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
+            <path
+              d="M3 12h3l2-5 4 10 2-6 2 4h5"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        }
+      />
     );
   }
 
   if (!numericKinds.length) {
     return (
-      <Glass className="p-6 text-center text-sm text-slate-400">
-        No numeric vitals in this window.
-      </Glass>
+      <EmptyState
+        tone="muted"
+        title="No numeric vitals in this window"
+        description="Try a wider time window — numeric samples haven't landed for this range yet."
+      />
     );
   }
 
@@ -497,7 +524,7 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
                   const r = p?.interpolated ? 2 : 3;
                   const opacity = p?.interpolated ? 0.35 : 1;
                   const { cx, cy } = props;
-                  if (cx == null || cy == null) return null;
+                  if (cx == null || cy == null) return <g key={`dot-skip-${props.index ?? 0}`} />;
                   return (
                     <circle
                       cx={cx}

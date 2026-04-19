@@ -10,7 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
 
-from sentinel import api, push
+from sentinel import api, auth as auth_mod, push
 from sentinel.auth import issue_device_token
 from sentinel.main import create_app
 
@@ -19,7 +19,7 @@ from sentinel.main import create_app
 async def client(monkeypatch):
     mock = AsyncMongoMockClient()
     db = mock["sentinel_test"]
-    for mod in (api, push):
+    for mod in (api, push, auth_mod):
         monkeypatch.setattr(mod, "get_db", lambda d=db: d)
     app = create_app(start_scheduler=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:

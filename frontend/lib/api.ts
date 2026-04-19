@@ -38,15 +38,13 @@ export type CallRecord = {
 
 export type Call = CallRecord;
 
-export type Alert = {
+export type AlertRecord = {
   id: string;
   patient_id: string;
   call_id: string;
   severity: string;
-  channel: string[];
+  channel: string;
   sent_at: string;
-  acknowledged?: boolean;
-  acknowledged_at?: string | null;
 };
 
 function isServer() {
@@ -68,12 +66,12 @@ async function j<T>(path: string): Promise<T> {
 export const api = {
   patients: () => j<Patient[]>("/api/patients"),
   calls: (pid: string) => j<CallRecord[]>(`/api/patients/${pid}/calls`),
-  alerts: () => j<Alert[]>("/api/alerts"),
+  alerts: () => j<AlertRecord[]>("/api/alerts"),
+  openAlertCount: () => j<{ count: number }>("/api/alerts/open-count"),
   ackAlert: (id: string) =>
-    fetch(resolve(`/api/alerts/${id}/ack`), { method: "POST" }).then((r) => r.json()),
-  openAlertCount: () =>
-    fetch(resolve("/api/alerts/open-count"), { cache: "no-store" })
-      .then((r) => r.json() as Promise<{ count: number }>),
+    fetch(resolve(`/api/alerts/${id}/ack`), { method: "POST" }).then(
+      (r) => r.ok,
+    ),
   regenerateSummary: (id: string) =>
     fetch(resolve(`/api/calls/${id}/summary/regenerate`), { method: "POST" })
       .then((r) => r.json() as Promise<{ summary_patient: string; summary_nurse: string }>),
@@ -83,4 +81,22 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ patient_id, severity }),
     }).then((r) => r.json() as Promise<{ call_id: string }>),
+  seedDemoVitals: (
+    patient_id: string,
+    variant: "mild" | "sepsis" | "reset" = "sepsis",
+    minutes_back: number = 45,
+  ) =>
+    fetch(resolve("/api/demo/seed-vitals"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patient_id, variant, minutes_back }),
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`${r.status} /api/demo/seed-vitals`);
+      return r.json() as Promise<{
+        ok: true;
+        inserted: number;
+        deleted: number;
+        variant: string;
+      }>;
+    }),
 };

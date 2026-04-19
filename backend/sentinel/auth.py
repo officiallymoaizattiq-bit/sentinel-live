@@ -23,7 +23,12 @@ def _b64dec(s: str) -> bytes:
 
 
 def issue_device_token(*, device_id: str, patient_id: str) -> str:
-    """Issue HS256 JWT with no expiry; revocation enforced via DB check."""
+    """Issue HS256 JWT. Revocation enforced via DB check on each request.
+
+    Includes `iat` (issued-at) so future migrations can add server-side
+    max-age windows without a schema change. No `exp` by design: device
+    tokens are long-lived and invalidated by setting `devices.revoked_at`.
+    """
     secret = get_settings().device_token_secret.encode()
     header = _b64enc(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     payload = _b64enc(json.dumps({
@@ -38,7 +43,12 @@ def issue_device_token(*, device_id: str, patient_id: str) -> str:
 
 
 def _decode_token(token: str) -> dict:
-    """Verify signature and decode payload. Raises HTTPException(401) on failure."""
+    """Verify signature and decode payload. Raises HTTPException(401) on failure.
+
+    All error paths raise the same generic 401 shape so attackers can't
+    distinguish malformed-vs-signature-vs-payload issues via response body.
+    Signature comparison uses hmac.compare_digest for constant-time compare.
+    """
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError:
@@ -49,7 +59,7 @@ def _decode_token(token: str) -> dict:
     expected = hmac.new(secret, signing_input, hashlib.sha256).digest()
     try:
         actual = _b64dec(sig_b64)
-    except Exception:
+    except (ValueError, TypeError):
         raise HTTPException(401, {"error": "malformed_token",
                                   "message": "Token signature undecodable"})
     if not hmac.compare_digest(expected, actual):
@@ -57,12 +67,15 @@ def _decode_token(token: str) -> dict:
                                   "message": "Token signature invalid"})
     try:
         payload = json.loads(_b64dec(payload_b64))
-    except Exception:
+    except (ValueError, TypeError, json.JSONDecodeError):
         raise HTTPException(401, {"error": "malformed_token",
                                   "message": "Token payload undecodable"})
-    if payload.get("typ") != "device":
+    if not isinstance(payload, dict) or payload.get("typ") != "device":
         raise HTTPException(401, {"error": "invalid_token",
                                   "message": "Not a device token"})
+    if not isinstance(payload.get("sub"), str) or not payload.get("sub"):
+        raise HTTPException(401, {"error": "invalid_token",
+                                  "message": "Token missing subject"})
     return payload
 
 

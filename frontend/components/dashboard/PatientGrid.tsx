@@ -14,7 +14,7 @@ import { usePolling } from "@/lib/hooks/usePolling";
 import { useEventStream } from "@/lib/hooks/useEventStream";
 import { PatientCard } from "@/components/PatientCard";
 import { CallNowButton } from "@/components/admin/CallNowButton";
-import { Glass } from "@/components/ui/Glass";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type CallSummary = {
   series: number[];
@@ -94,14 +94,21 @@ export function PatientGrid({
           patients.map(async (p) => {
             try {
               const calls = await api.calls(p.id);
-              return [p.id, summarize(calls)] as const;
+              return [p.id, summarize(calls), true] as const;
             } catch {
-              return [p.id, summaries[p.id] ?? EMPTY] as const;
+              return [p.id, EMPTY, false] as const;
             }
           })
         );
         if (alive) {
-          setSummaries(Object.fromEntries(entries));
+          setSummaries((prev) => {
+            const next: Record<string, CallSummary> = {};
+            for (const [id, s, ok] of entries) {
+              // Preserve prior summary when a per-patient fetch errored.
+              next[id] = ok ? s : prev[id] ?? EMPTY;
+            }
+            return next;
+          });
         }
       } catch {
         /* noop */
@@ -117,30 +124,27 @@ export function PatientGrid({
 
   if (!patients.length) {
     return (
-      <Glass
-        backdrop={false}
-        solidTone="lower"
-        className="flex flex-col items-center justify-center gap-2 p-12 text-center"
-      >
-        <div className="grid h-12 w-12 place-items-center rounded-full bg-accent-500/15 ring-1 ring-accent-400/30">
-          <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6 text-accent-300">
+      <EmptyState
+        tone="accent"
+        title="No patients enrolled yet"
+        description={
+          <>
+            Run{" "}
+            <code className="rounded bg-white/5 px-1.5 py-0.5 text-[11px] text-slate-300">
+              POST /api/demo/run
+            </code>{" "}
+            to seed a synthetic 5-day trajectory for the demo.
+          </>
+        }
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
             <path
               d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-3.5 0-8 1.8-8 5v2h16v-2c0-3.2-4.5-5-8-5z"
               fill="currentColor"
             />
           </svg>
-        </div>
-        <div className="text-sm font-medium text-slate-200">
-          No patients enrolled yet
-        </div>
-        <div className="max-w-sm text-xs text-slate-500">
-          Run{" "}
-          <code className="rounded bg-white/5 px-1.5 py-0.5 text-[11px] text-slate-300">
-            POST /api/demo/run
-          </code>{" "}
-          to seed a synthetic 5-day trajectory for the demo.
-        </div>
-      </Glass>
+        }
+      />
     );
   }
 
@@ -160,24 +164,34 @@ export function PatientGrid({
             0 shown · {patients.length} enrolled
           </span>
         </div>
-        <Glass
-          backdrop={false}
-          solidTone="lower"
-          className="flex flex-col items-center justify-center gap-3 p-12 text-center"
-        >
-          <div className="text-sm font-medium text-slate-200">
-            No patients match your filters
-          </div>
-          <p className="max-w-sm text-xs text-slate-500">
-            Try widening the search or clearing advanced filters.
-          </p>
-          <Link
-            href="/admin"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-white/20"
-          >
-            Clear all filters
-          </Link>
-        </Glass>
+        <EmptyState
+          tone="muted"
+          title="No patients match your filters"
+          description="Try widening the search or clearing advanced filters."
+          icon={
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              className="h-5 w-5"
+              aria-hidden
+            >
+              <path
+                d="M4 6h16M7 12h10M10 18h4"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          }
+          action={
+            <Link
+              href="/admin"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-hairline bg-surface-hover px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors duration-150 hover:border-hairline-strong hover:bg-white/[0.09]"
+            >
+              Clear all filters
+            </Link>
+          }
+        />
       </>
     );
   }
@@ -199,7 +213,7 @@ export function PatientGrid({
             : `${patients.length} total`}
         </span>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*:nth-child(odd):last-child]:sm:col-span-2">
         {filteredPatients.map((p) => {
           const s = summaries[p.id] ?? EMPTY;
           return (

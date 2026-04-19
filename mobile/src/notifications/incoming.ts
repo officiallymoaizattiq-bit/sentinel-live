@@ -164,68 +164,6 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   return requested.granted;
 }
 
-/**
- * Show (or replace) the incoming-call notification. Local-only — we don't
- * round-trip through APNS/FCM. Returns the OS-assigned identifier (so a
- * caller could potentially cancel by id; we cancel by tag instead).
- */
-export async function showIncomingCallNotification(
-  payload: IncomingCallPayload,
-): Promise<void> {
-  await configureIncomingCallNotifications();
-  // Cancel any previous incoming-call notification before scheduling a new
-  // one so we never end up with two ringers competing on the lock screen.
-  await dismissIncomingCallNotification();
-
-  // Channel binding is done via the TRIGGER, not the content. expo-notifications'
-  // schedule API treats `channelId` as a property of NativeChannelAwareTriggerInput
-  // (see node_modules/expo-notifications/src/scheduleNotificationAsync.ts:134-145).
-  // Putting `channelId` under `content.android` does NOTHING — the OS routes
-  // the notification to `expo_notifications_fallback_notification_channel`
-  // (importance=4, no vibration), which is exactly the silent "didn't ring"
-  // behavior we were seeing. On iOS the trigger must be `null` (no channels).
-  const trigger =
-    Platform.OS === 'android'
-      ? ({ channelId: INCOMING_CALL_CHANNEL_ID } as Notifications.NotificationTriggerInput)
-      : null;
-
-  // Why every field below is required (learned the hard way reading
-  // ExpoNotificationBuilder.kt and watching `dumpsys notification`):
-  //
-  // - sound: true → sets shouldPlayDefaultSound on the native content. If
-  //   neither this nor `vibrate` is set, the builder calls
-  //   `setSilent(true)` which suppresses both sound AND vibration even
-  //   when the channel has them configured. That's what we observed —
-  //   notifications posting with `vibrate=null sound=null defaults=0`.
-  // - vibrate: [...] → sets vibrationPattern on the native content so
-  //   shouldVibrate() returns true.
-  // - priority: MAX → expo-notifications computes the NotificationCompat
-  //   priority by reading content.priority. With no notificationBehavior
-  //   reachable (which happens whenever the JS handler can't run — app
-  //   backgrounded, screen off, JS thread paused), the native code falls
-  //   back to content.priority. Without this, the posted notification
-  //   gets importance=2 (LOW) and never shows as a heads-up banner.
-  // - NO sticky: true → Android maps it to FLAG_ONGOING_EVENT, which
-  //   exempts notifications from making sound or vibrating regardless of
-  //   channel.
-  await Notifications.scheduleNotificationAsync({
-    identifier: INCOMING_CALL_NOTIFICATION_ID,
-    content: {
-      title: 'Sentinel is calling you',
-      body:
-        payload.mode === 'phone'
-          ? 'Your care team would like a quick check-in.'
-          : 'A check-in is ready when you are.',
-      data: { ...payload, kind: 'incoming-call' },
-      categoryIdentifier: INCOMING_CALL_CATEGORY_ID,
-      sound: true,
-      vibrate: [0, 1000, 500, 1000, 500, 1000],
-      priority: Notifications.AndroidNotificationPriority.MAX,
-    },
-    trigger,
-  });
-}
-
 export async function dismissIncomingCallNotification(): Promise<void> {
   // Our own locally-scheduled copy. Safe no-op if it isn't present.
   try {

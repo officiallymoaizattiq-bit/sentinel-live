@@ -145,33 +145,39 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
     <div className="h-[260px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={points} margin={{ top: 12, right: 8, left: 4, bottom: 8 }}>
+          <defs>
+            <linearGradient id="trajectory-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={strokeColor} stopOpacity={0.28} />
+              <stop offset="100%" stopColor={strokeColor} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
           <ReferenceArea
             y1={0}
             y2={1}
-            fill="rgba(30,41,59,0.45)"
+            fill="rgba(15,23,42,0.35)"
             stroke="none"
           />
           <CartesianGrid
-            strokeDasharray="3 6"
-            stroke="rgba(148,163,184,0.08)"
+            strokeDasharray="2 6"
+            stroke="rgba(148,163,184,0.07)"
             vertical={false}
           />
           {[0.2, 0.4, 0.6, 0.8].map((y) => (
             <ReferenceLine
               key={y}
               y={y}
-              stroke="rgba(255,255,255,0.14)"
-              strokeDasharray="3 3"
+              stroke="rgba(255,255,255,0.1)"
+              strokeDasharray="2 4"
             />
           ))}
 
           <XAxis
             dataKey="t"
             type="category"
-            stroke="rgba(148,163,184,0.6)"
+            stroke="rgba(148,163,184,0.45)"
             tickLine={false}
-            axisLine={{ stroke: "rgba(148,163,184,0.1)" }}
-            height={36}
+            axisLine={{ stroke: "rgba(148,163,184,0.08)" }}
+            height={32}
             interval={0}
             tick={(props: {
               x: number;
@@ -200,23 +206,28 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
           />
           <YAxis
             domain={[0, 1]}
-            stroke="rgba(148,163,184,0.6)"
-            tick={{ fontSize: 10, fill: "rgba(148,163,184,0.7)" }}
+            stroke="rgba(148,163,184,0.45)"
+            tick={{ fontSize: 10, fill: "rgba(148,163,184,0.6)" }}
             tickLine={false}
             axisLine={false}
-            width={44}
+            width={40}
           />
           <Tooltip
             content={<GlassTooltip />}
-            cursor={{ stroke: "rgba(148,163,184,0.35)", strokeDasharray: "3 3" }}
+            cursor={{
+              stroke: "rgba(148,163,184,0.3)",
+              strokeDasharray: "2 4",
+              strokeWidth: 1,
+            }}
           />
           <Area
             type="monotone"
             dataKey="deterioration"
             stroke={strokeColor}
-            strokeWidth={2.5}
-            fill={strokeColor}
-            fillOpacity={0.12}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill="url(#trajectory-fill)"
             dot={(props) => {
               const { cx, cy, payload } = props;
               if (payload == null || cx == null || cy == null) return <g />;
@@ -225,10 +236,10 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
                 <circle
                   cx={cx}
                   cy={cy}
-                  r={3.5}
+                  r={3}
                   fill="#0a0f1f"
                   stroke={c}
-                  strokeWidth={2}
+                  strokeWidth={1.75}
                 />
               );
             }}
@@ -239,6 +250,7 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
               strokeWidth: 2,
             }}
             isAnimationActive
+            animationDuration={400}
           />
           {mounted && <Customized component={OutcomeMarkers} />}
         </AreaChart>

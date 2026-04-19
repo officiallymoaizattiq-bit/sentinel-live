@@ -17,6 +17,12 @@ from sentinel.models import RecommendedAction, Score
 from sentinel.named_seed import seed_named_patients
 from sentinel.replay import replay_file
 
+# Repo-root-anchored default so `run_trajectory_demo()` works regardless of
+# current working directory (tests, uvicorn, CLI).
+# backend/sentinel/demo_runner.py -> parents[2] == repo root
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_DEMO_DIR = _REPO_ROOT / "demo"
+
 
 class ScriptedLLM:
     """For fully offline demo. Replace with GeminiLLM() for real runs."""
@@ -89,8 +95,8 @@ TRAJECTORIES: list[list[tuple[str, Score]]] = [
 ]
 
 
-async def run_trajectory_demo(root: str = "demo") -> list[str]:
-    demo_dir = Path(root)
+async def run_trajectory_demo(root: str | Path | None = None) -> list[str]:
+    demo_dir = Path(root) if root is not None else _DEFAULT_DEMO_DIR
     pids = await seed_named_patients(clean=True)
 
     for i, pid in enumerate(pids):
@@ -98,8 +104,8 @@ async def run_trajectory_demo(root: str = "demo") -> list[str]:
         for stage, score in traj:
             cid = await replay_file(
                 patient_id=pid,
-                script_path=str(demo_dir / "scripts" / f"{stage}.txt"),
-                wav_path=str(demo_dir / "audio" / f"{stage}.wav"),
+                script_path=demo_dir / "scripts" / f"{stage}.txt",
+                wav_path=demo_dir / "audio" / f"{stage}.wav",
                 llm=ScriptedLLM(score),
             )
             await send_alert(patient_id=pid, call_id=cid, score=score)

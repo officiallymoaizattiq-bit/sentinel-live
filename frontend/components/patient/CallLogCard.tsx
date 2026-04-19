@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Call } from "@/lib/api";
 import { Glass } from "@/components/ui/Glass";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 function resolvedSummary(call: Call, audience: "patient" | "nurse"): string | null {
   if (audience === "patient") {
@@ -71,8 +72,8 @@ export function CallLogCard({
       </div>
       {awaitingSummary ? (
         <div className="space-y-2">
-          <div className="h-3 w-3/4 animate-pulse rounded bg-white/10" />
-          <div className="h-3 w-1/2 animate-pulse rounded bg-white/10" />
+          <Skeleton className="h-3 w-3/4 rounded" />
+          <Skeleton className="h-3 w-1/2 rounded" />
         </div>
       ) : call.summaries_error ? (
         <div className="space-y-2">

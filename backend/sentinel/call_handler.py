@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import tempfile
 from datetime import datetime, timezone
@@ -33,21 +34,6 @@ def build_check_in_twiml(*, patient_name: str, action_url: str) -> str:
     return str(resp)
 
 
-def _twilio_create_call(**kwargs):  # kept for Task 12 test mock seam
-    from twilio.rest import Client
-    s = get_settings()
-    client = Client(s.twilio_account_sid, s.twilio_auth_token)
-    return client.calls.create(**kwargs)
-
-
-def _ulaw_to_pcm(ulaw: bytes) -> bytes:
-    try:
-        import audioop
-    except ModuleNotFoundError:
-        import audioop_lts as audioop
-    return audioop.ulaw2lin(ulaw, 2)
-
-
 async def _demo_stub_call(patient_id: str) -> str:
     call_id = str(uuid4())
     await get_db().calls.insert_one({
@@ -66,8 +52,16 @@ def _el_phone_number_id() -> str | None:
     """Return the EL-registered Twilio phone_number_id, if configured.
     We store it in Mongo after first import; otherwise env var ELEVENLABS_PHONE_NUMBER_ID.
     """
-    import os
     return os.environ.get("ELEVENLABS_PHONE_NUMBER_ID") or None
+
+
+def _el_creds_ready(s) -> bool:
+    """True when all ElevenLabs-native outbound dialing creds are present."""
+    return bool(
+        s.elevenlabs_api_key
+        and s.elevenlabs_agent_id
+        and s.twilio_account_sid.startswith("AC")
+    )
 
 
 async def place_call(patient_id: str) -> str:
@@ -79,7 +73,8 @@ async def place_call(patient_id: str) -> str:
       3. Store a provisional Call doc with conversation_id; post-call
          `finalize_call(conversation_id)` pulls transcript + audio and
          runs the scoring pipeline.
-    Demo-mode shortcut (no EL/Twilio creds): write a stub call doc.
+    Fall back to a stub call doc when any required cred is missing (covers
+    both demo-mode and misconfigured-prod).
     """
     db = get_db()
     patient = await db.patients.find_one({"_id": patient_id})
@@ -87,13 +82,9 @@ async def place_call(patient_id: str) -> str:
         raise LookupError(patient_id)
     s = get_settings()
 
-    # Demo-mode shortcut when creds absent
-    if (
-        s.demo_mode
-        and (not s.twilio_account_sid.startswith("AC")
-             or not s.elevenlabs_api_key
-             or not s.elevenlabs_agent_id)
-    ):
+    if not _el_creds_ready(s):
+        if not s.demo_mode:
+            log.warning("place_call: EL/Twilio creds missing, using stub (not demo_mode)")
         return await _demo_stub_call(patient_id)
 
     phone_number_id = _el_phone_number_id()
@@ -104,11 +95,18 @@ async def place_call(patient_id: str) -> str:
     from elevenlabs.client import ElevenLabs
     el = ElevenLabs(api_key=s.elevenlabs_api_key)
 
-    resp = el.conversational_ai.twilio.outbound_call(
-        agent_id=s.elevenlabs_agent_id,
-        agent_phone_number_id=phone_number_id,
-        to_number=patient["phone"],
-    )
+    # EL SDK is synchronous; dispatch to a thread so we don't block the loop.
+    try:
+        resp = await asyncio.to_thread(
+            el.conversational_ai.twilio.outbound_call,
+            agent_id=s.elevenlabs_agent_id,
+            agent_phone_number_id=phone_number_id,
+            to_number=patient["phone"],
+        )
+    except Exception:
+        log.exception("EL outbound_call failed for patient %s", patient_id)
+        return await _demo_stub_call(patient_id)
+
     conversation_id = getattr(resp, "conversation_id", None) or getattr(
         resp, "conversation_sid", None
     )
@@ -163,8 +161,15 @@ async def finalize_call(
     from elevenlabs.client import ElevenLabs
     el = ElevenLabs(api_key=s.elevenlabs_api_key)
 
-    convo = el.conversational_ai.conversations.get(conversation_id)
     transcript_turns: list[TranscriptTurn] = []
+    try:
+        convo = await asyncio.to_thread(
+            el.conversational_ai.conversations.get, conversation_id
+        )
+    except Exception as e:
+        log.warning("EL conversation fetch failed for %s: %s", conversation_id, e)
+        convo = None
+
     for m in getattr(convo, "transcript", []) or []:
         role = getattr(m, "role", "agent")
         text = getattr(m, "message", "") or getattr(m, "text", "")
@@ -180,7 +185,9 @@ async def finalize_call(
     features = AudioFeatures()
     tmp_path: Path | None = None
     try:
-        audio_bytes = el.conversational_ai.conversations.audio.get(conversation_id)
+        audio_bytes = await asyncio.to_thread(
+            el.conversational_ai.conversations.audio.get, conversation_id
+        )
         if audio_bytes:
             raw = (
                 audio_bytes
@@ -201,10 +208,14 @@ async def finalize_call(
             except OSError:
                 pass
 
-    first = await db.calls.find({"patient_id": call_doc["patient_id"]}) \
-                          .sort("called_at", 1).limit(1).to_list(1)
-    baseline = AudioFeatures(**first[0].get("audio_features") or {}) \
-               if first else AudioFeatures()
+    first = await (
+        db.calls.find({"patient_id": call_doc["patient_id"]})
+        .sort("called_at", 1)
+        .limit(1)
+        .to_list(1)
+    )
+    baseline_feats = (first[0].get("audio_features") if first else None) or {}
+    baseline = AudioFeatures(**baseline_feats)
     drift = zscore_drift(current=features, baseline=baseline, stdev=None)
 
     await db.calls.update_one(

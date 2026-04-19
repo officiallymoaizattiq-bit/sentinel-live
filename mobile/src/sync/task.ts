@@ -30,6 +30,13 @@ export type LastSyncStatus = {
     | 'dev_unsigned';
   acceptedTotal?: number;
   flaggedClockSkewTotal?: number;
+  /**
+   * |device clock - server Date header| in seconds, observed on the most
+   * recent successful batch in this sync pass. Surfaces a warning on the
+   * dashboard when the device clock has drifted far enough to risk server
+   * rejections (backend accepts ±1h; we warn above 60s).
+   */
+  deviceClockSkewSeconds?: number | null;
   message?: string;
 };
 
@@ -96,6 +103,7 @@ export async function runSyncOnce(): Promise<BackgroundFetch.BackgroundFetchResu
   const chunks = chunkSamples(samples);
   let acceptedTotal = 0;
   let flaggedTotal = 0;
+  let clockSkewSeconds: number | null = null;
   let advancedCursorTo = cursorIso;
 
   for (const chunk of chunks) {
@@ -104,6 +112,7 @@ export async function runSyncOnce(): Promise<BackgroundFetch.BackgroundFetchResu
     if (r.ok) {
       acceptedTotal += r.accepted;
       flaggedTotal += r.flaggedClockSkew;
+      if (r.serverClockSkewSeconds != null) clockSkewSeconds = r.serverClockSkewSeconds;
       const top = maxTimestamp(chunk);
       if (top && top > advancedCursorTo) advancedCursorTo = top;
       continue;
@@ -177,6 +186,11 @@ export async function runSyncOnce(): Promise<BackgroundFetch.BackgroundFetchResu
     result: 'ok',
     acceptedTotal,
     flaggedClockSkewTotal: flaggedTotal,
+    deviceClockSkewSeconds: clockSkewSeconds,
+    message:
+      clockSkewSeconds != null && clockSkewSeconds > 60
+        ? `device clock is off by ${Math.round(clockSkewSeconds)}s`
+        : undefined,
   });
   return BackgroundFetch.BackgroundFetchResult.NewData;
 }

@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/api";
+import { DemoHealthPanel } from "@/components/patient/DemoHealthPanel";
 import { PatientLiveView } from "@/components/patient/PatientLiveView";
 
 export const revalidate = 0;
@@ -21,7 +22,13 @@ async function getSession(): Promise<{ role: string; patient_id?: string } | nul
   }
 }
 
-export default async function PatientHome() {
+type SearchParams = { [key: string]: string | string[] | undefined };
+
+export default async function PatientHome({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
   const session = await getSession();
   if (!session || session.role !== "patient" || !session.patient_id) {
     redirect("/login");
@@ -34,12 +41,26 @@ export default async function PatientHome() {
   const me = patients.find((p) => p.id === pid);
   const agentId = process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID ?? "";
 
+  const demoQuery = searchParams?.demo;
+  const demoQueryOn = Array.isArray(demoQuery)
+    ? demoQuery.includes("1")
+    : demoQuery === "1";
+  const demoEnv = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+  const showDemoPanel = demoQueryOn || demoEnv;
+
   return (
-    <PatientLiveView
-      patientId={pid}
-      patientName={me?.name ?? "Patient"}
-      initialCalls={calls}
-      agentId={agentId}
-    />
+    <>
+      <PatientLiveView
+        patientId={pid}
+        patientName={me?.name ?? "Patient"}
+        initialCalls={calls}
+        agentId={agentId}
+      />
+      {showDemoPanel && (
+        <div className="mx-auto max-w-lg px-4 pb-8">
+          <DemoHealthPanel patientId={pid} />
+        </div>
+      )}
+    </>
   );
 }

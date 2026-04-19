@@ -2,7 +2,9 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
+import { exchangePairingCode, parsePairingInput } from '../src/auth/pairing';
 import { loadCredentials, type Credentials } from '../src/auth/storage';
 import { palette } from '../src/components/ui';
 import {
@@ -114,6 +116,41 @@ export default function RootLayout() {
   useEffect(() => {
     configureIncomingCallNotifications().catch(() => {});
   }, []);
+
+  // Deep-link pairing handler. `sentinel://pair/<6-digit-code>` is the
+  // link produced by `POST /api/patients/{pid}/pair` (see
+  // docs/backend-contract.md §5). We claim both the initial URL (cold start
+  // from a tap on the pairing QR) and any runtime URL events so a mid-
+  // session scan also works. Ignored silently if the app is already paired.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+
+    const handleUrl = async (url: string | null) => {
+      if (!url) return;
+      const code = parsePairingInput(url);
+      if (!code) return;
+      // Don't clobber an existing session — the user would have to clear
+      // credentials manually (e.g. by revoking the device) before a new
+      // pair takes effect.
+      const existing = await loadCredentials();
+      if (existing) return;
+      const result = await exchangePairingCode(code);
+      if (cancelled) return;
+      if (result.ok) {
+        await refreshAuth(true);
+      }
+    };
+
+    Linking.getInitialURL().then(handleUrl).catch(() => {});
+    const sub = Linking.addEventListener('url', (ev) => {
+      handleUrl(ev.url).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, [ready, refreshAuth]);
 
   // Push token registration. Runs once per (re-)pairing. The actual delivery
   // path is: backend /api/calls/trigger -> Expo Push API -> FCM/APNS ->

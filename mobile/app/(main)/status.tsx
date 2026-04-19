@@ -340,55 +340,6 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
-      {latestScore && severity && (
-        <Glass tone={isCritical ? 'crit' : 'default'} padded>
-          <View style={styles.latestHeader}>
-            <Text style={styles.label}>LATEST CHECK-IN</Text>
-            <SeverityChip
-              severity={severity}
-              label={severityLabel(severity, isCritical)}
-            />
-          </View>
-          <Text
-            style={[styles.summary, isCritical && { color: palette.critText }]}
-          >
-            {latestScore.summary}
-          </Text>
-          <View style={styles.scoreRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.scoreLabel}>DETERIORATION</Text>
-              <View style={styles.scoreValueRow}>
-                <Text
-                  style={[
-                    styles.scoreValue,
-                    { color: severityMeta(severity).color },
-                  ]}
-                >
-                  {latestScore.deterioration.toFixed(2)}
-                </Text>
-                <Text style={styles.scoreUnit}>/ 1.00</Text>
-              </View>
-            </View>
-            <View style={styles.scoreMini}>
-              <Text style={styles.scoreMiniLabel}>qSOFA</Text>
-              <Text style={styles.scoreMiniValue}>{latestScore.qsofa}</Text>
-            </View>
-            <View style={styles.scoreMini}>
-              <Text style={styles.scoreMiniLabel}>NEWS2</Text>
-              <Text style={styles.scoreMiniValue}>{latestScore.news2}</Text>
-            </View>
-          </View>
-          <Text style={styles.timestamp}>
-            {new Date(last_call!.called_at).toLocaleString()}
-          </Text>
-          {isCritical ? (
-            <Text style={styles.criticalNote}>
-              Recommended action: contact emergency services.
-            </Text>
-          ) : null}
-        </Glass>
-      )}
-
       {last_call ? <CheckInSummaryCard call={last_call} /> : null}
 
       <Glass padded>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Glass } from "@/components/ui/Glass";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { CallRecord } from "@/lib/api";
 
 const OUTCOME_COLOR: Record<string, string> = {
@@ -22,9 +23,22 @@ export function CallTimeline({ calls }: { calls: CallRecord[] }) {
 
   if (!calls.length) {
     return (
-      <Glass className="flex items-center justify-center p-6 text-sm text-slate-500">
-        No calls yet.
-      </Glass>
+      <EmptyState
+        title="No calls yet"
+        description="Check-ins will appear here once the first scored call completes."
+        tone="muted"
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden>
+            <path
+              d="M4 5a2 2 0 012-2h2.3a1 1 0 01.95.68l1 2.98a1 1 0 01-.23 1L8.7 9.2a12 12 0 006.1 6.1l1.55-1.35a1 1 0 011-.23l2.98 1a1 1 0 01.68.95V18a2 2 0 01-2 2A16 16 0 014 5z"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        }
+      />
     );
   }
 

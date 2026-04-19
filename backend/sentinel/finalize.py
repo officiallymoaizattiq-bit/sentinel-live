@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -16,16 +17,32 @@ log = logging.getLogger("sentinel.finalize")
 
 
 async def _score_if_needed(call_doc: dict, transcript: str) -> dict:
-    """Return a score dict. Use existing score when present; else compute via scoring.score_call."""
+    """Return the call's score dict.
+
+    All production entry points (``call_handler.finalize_call`` and
+    ``/api/calls/widget-end``) insert the call doc with a precomputed
+    ``score`` before invoking this finalize step, so this helper's only
+    job is to return that existing score. If it's missing we fall back
+    to a conservative ``none`` action rather than invoking the full
+    scoring pipeline from here (which would need audio features, drift,
+    and the Gemini LLM — none of which are plumbed through the webhook
+    path).
+    """
     existing = call_doc.get("score")
     if existing:
         return existing
-    from sentinel.scoring import score_call
-
-    s: Score = await score_call(
-        patient_id=call_doc["patient_id"], transcript=transcript
+    log.warning(
+        "finalize_call: no prior score for call=%s; defaulting to 'none'",
+        call_doc.get("_id"),
     )
-    return s.model_dump()
+    return {
+        "deterioration": 0.0,
+        "qsofa": 0,
+        "news2": 0,
+        "red_flags": [],
+        "summary": (transcript[:200] if transcript else ""),
+        "recommended_action": RecommendedAction.NONE.value,
+    }
 
 
 async def finalize_call(
@@ -48,9 +65,7 @@ async def finalize_call(
         log.warning("finalize_call: unknown conversation_id=%s", conversation_id)
         return {"already_finalized": False, "skipped": True}
 
-    already_ended = doc.get("ended_at") is not None
-
-    if already_ended:
+    if doc.get("ended_at") is not None:
         publish(
             {
                 "type": "call_completed",
@@ -87,22 +102,49 @@ async def finalize_call(
     err: str | None = None
     if settings.enable_call_summary:
         try:
-            summary_p = await summarize_patient(transcript=transcript)
-            summary_n = await summarize_nurse(
-                transcript=transcript,
-                vitals={},
-                score={k: score[k] for k in ("deterioration", "qsofa", "news2")},
+            summary_p, summary_n = await asyncio.gather(
+                summarize_patient(transcript=transcript),
+                summarize_nurse(
+                    transcript=transcript,
+                    vitals={},
+                    score={k: score[k] for k in ("deterioration", "qsofa", "news2")},
+                ),
             )
             update["summaries_generated_at"] = now
         except Exception as e:
             err = str(e)
-            log.exception("gemini summary failed for %s: %s", conversation_id, e)
+            log.exception("summary failed for %s: %s", conversation_id, e)
 
     update["summary_patient"] = summary_p
     update["summary_nurse"] = summary_n
     update["summaries_error"] = err
 
-    await db.calls.update_one({"_id": doc["_id"]}, {"$set": update})
+    # Atomic check-and-set on ended_at: if a racing finalize
+    # (watchdog vs webhook) already set it, our write is a no-op and we
+    # short-circuit as if we had observed the prior finalize. Prevents
+    # double send_alert / double call_completed with stale data.
+    result = await db.calls.update_one(
+        {"_id": doc["_id"], "ended_at": None},
+        {"$set": update},
+    )
+    if result.modified_count == 0:
+        latest = await db.calls.find_one({"_id": doc["_id"]}) or doc
+        publish(
+            {
+                "type": "call_completed",
+                "call_id": latest["_id"],
+                "patient_id": latest["patient_id"],
+                "outcome_label": latest.get("outcome_label"),
+                "escalation_911": bool(latest.get("escalation_911")),
+                "summary_patient": latest.get("summary_patient"),
+                "summary_nurse": latest.get("summary_nurse"),
+            }
+        )
+        return {
+            "already_finalized": True,
+            "call_id": latest["_id"],
+            "summary_ok": bool((latest.get("summary_patient") or "").strip()),
+        }
 
     if outcome_label in ("schedule_visit", "escalated_911"):
         try:
@@ -129,5 +171,5 @@ async def finalize_call(
     return {
         "already_finalized": False,
         "call_id": doc["_id"],
-        "summary_ok": summary_p is not None,
+        "summary_ok": bool((summary_p or "").strip()),
     }

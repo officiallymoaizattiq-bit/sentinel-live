@@ -5,8 +5,12 @@ from datetime import datetime, timedelta, timezone
 
 from sentinel.db import get_db
 from sentinel.enrollment import enroll_patient
-from sentinel.vitals import ensure_demo_clinician_vitals
 from sentinel.models import Caregiver, Consent, SurgeryType
+from sentinel.vitals import ensure_demo_clinician_vitals
+
+# Stable UUID for "John Chen" — the clinician-UI demo vitals are keyed off this
+# exact patient_id (see sentinel.vitals.ensure_demo_clinician_vitals).
+JOHN_CHEN_PATIENT_ID = "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
 
 DEMO_PATIENTS = [
     {
@@ -44,10 +48,14 @@ async def seed_named_patients(*, clean: bool = True) -> list[str]:
         await db.alerts.delete_many({})
         await db.care_plans.delete_many({})
         await db.vitals.delete_many({})
+    else:
+        # Even when not wiping everything, make sure John's fixed _id is free
+        # so enroll_patient's insert_one() does not collide.
+        await db.patients.delete_one({"_id": JOHN_CHEN_PATIENT_ID})
+        await db.care_plans.delete_many({"patient_id": JOHN_CHEN_PATIENT_ID})
 
     now = datetime.now(tz=timezone.utc)
     pids: list[str] = []
-    john_pid = "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
     for i, p in enumerate(DEMO_PATIENTS):
         surgery_date = now - timedelta(days=p["days_post_op"] + 2)
         discharge_date = now - timedelta(days=p["days_post_op"])
@@ -59,7 +67,7 @@ async def seed_named_patients(*, clean: bool = True) -> list[str]:
             discharge_date=discharge_date,
             caregiver=Caregiver(name=p["caregiver_name"], phone=p["caregiver_phone"]),
             consent=Consent(recorded_at=now, ip="127.0.0.1", version="v1"),
-            patient_id=john_pid if i == 0 else None,
+            patient_id=JOHN_CHEN_PATIENT_ID if i == 0 else None,
         )
         pids.append(pid)
     await ensure_demo_clinician_vitals(db)

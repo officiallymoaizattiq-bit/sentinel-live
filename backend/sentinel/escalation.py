@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -7,6 +10,8 @@ from twilio.rest import Client as TwilioClient
 from sentinel.config import get_settings
 from sentinel.db import get_db
 from sentinel.models import RecommendedAction, Score
+
+log = logging.getLogger("sentinel.escalation")
 
 
 @dataclass
@@ -37,10 +42,14 @@ def _sms_send(to: str, body: str) -> None:
         or s.demo_mode
         or to.startswith("+1555")
     ):
-        print(f"[DEMO SMS] to={to} body={body}")
+        log.info("demo sms: to=%s body=%s", to, body)
         return
-    client = TwilioClient(s.twilio_account_sid, s.twilio_auth_token)
-    client.messages.create(from_=s.twilio_from_number, to=to, body=body)
+    try:
+        client = TwilioClient(s.twilio_account_sid, s.twilio_auth_token)
+        client.messages.create(from_=s.twilio_from_number, to=to, body=body)
+    except Exception as e:
+        # Never let a Twilio failure abort the alert-insert + SSE publish.
+        log.warning("twilio send failed to=%s: %s", to, e)
 
 
 def _compose(patient: dict, score: Score, who: str) -> str:
@@ -62,9 +71,12 @@ async def send_alert(*, patient_id: str, call_id: str, score: Score) -> None:
     bundle = decide_actions(score=score)
     for ch in bundle.channels:
         if ch == "sms_caregiver":
-            phone = patient["caregiver"]["phone"]
-            _sms_send(phone, _compose(patient, score, "Caregiver"))
+            phone = (patient.get("caregiver") or {}).get("phone") or ""
+            if phone:
+                _sms_send(phone, _compose(patient, score, "Caregiver"))
         elif ch == "sms_nurse":
+            # `assigned_nurse_id` doubles as the nurse's SMS destination in
+            # this codebase (see tests/test_escalation.py).
             phone = patient.get("assigned_nurse_id") or ""
             if phone:
                 _sms_send(phone, _compose(patient, score, "Nurse"))

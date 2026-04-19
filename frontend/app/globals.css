@@ -33,6 +33,10 @@ body {
 
 html {
   scroll-behavior: smooth;
+  /* Kill iOS Safari rubber-band / bounce on the document. */
+  overscroll-behavior: none;
+  /* Prevent landscape auto-size-adjust that makes fonts grow weirdly on iPhone. */
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -42,6 +46,10 @@ body {
   background-attachment: fixed;
   font-feature-settings: "cv11", "ss01", "ss03";
   min-height: 100vh;
+  /* Safe-area-aware bottom padding for iPhone home-indicator (additive — pages still control their own padding). */
+  padding-bottom: env(safe-area-inset-bottom);
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 @layer components {
@@ -124,9 +132,68 @@ body {
     background-size: 200% 100%;
     animation: shimmer 2.5s linear infinite;
   }
+
+  /* Skeleton placeholder: translucent base + shimmering highlight on top.
+     Implemented with a ::before pseudo so we can keep a fixed base color
+     beneath the animated gradient (which has transparent endpoints). */
+  .skeleton-tile {
+    position: relative;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.045);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  }
+  .skeleton-tile::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.08) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2.5s linear infinite;
+    pointer-events: none;
+  }
 }
 
 @layer utilities {
+  /* Incoming-call pulsing green ring (patient surface, iPhone Safari). */
+  .ring-pulse-incoming {
+    animation: pulseRingIncoming 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  @keyframes pulseRingIncoming {
+    0% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+    }
+    70% {
+      box-shadow: 0 0 0 16px rgba(16, 185, 129, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+  }
+
+  /* Safe-area helpers for notch / home-indicator. */
+  .safe-pt {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+  .safe-pb {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .safe-px {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  /* 56px-minimum tap target per iOS HIG + WCAG 2.5.5. */
+  .tap-target {
+    min-height: 56px;
+    min-width: 56px;
+    touch-action: manipulation;
+  }
+
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
@@ -165,8 +232,11 @@ body {
   .animate-pulse-ring,
   .animate-shimmer,
   .animate-float-in,
+  .animate-fade-in,
+  .animate-lift-in,
   .ring-pulse-crit,
-  .shimmer-bg {
+  .shimmer-bg,
+  .skeleton-tile::after {
     animation: none !important;
   }
 }

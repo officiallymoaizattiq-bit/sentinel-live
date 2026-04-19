@@ -13,7 +13,7 @@ def db(monkeypatch):
 
 
 async def test_seed_cohort_inserts_cases(db):
-    await seed.seed_cohort(count=20)
+    await seed.seed_cohort(count=20, seed=42)
     n = await db.cohort_outcomes.count_documents({})
     assert n == 20
     sample = await db.cohort_outcomes.find_one({})

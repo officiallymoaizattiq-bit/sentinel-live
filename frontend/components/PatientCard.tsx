@@ -7,6 +7,7 @@ import { SeverityChip } from "@/components/ui/SeverityChip";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { OutcomePill } from "@/components/admin/OutcomePill";
 import {
+  formatNextCall,
   formatRelative,
   scoreToSeverity,
   severityMeta,
@@ -41,8 +42,16 @@ export function PatientCard({
       : "—";
 
   return (
-    <Link href={`/patients/${p.id}`} className="block focus:outline-none">
-      <Glass backdrop={false} solidTone="lower" className="relative overflow-hidden p-4">
+    <Link
+      href={`/patients/${p.id}`}
+      aria-label={`Open patient ${p.name}`}
+      className="group block rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+    >
+      <Glass
+        backdrop={false}
+        solidTone="lower"
+        className="relative overflow-hidden p-4 transition-[transform,border-color,box-shadow] duration-200 ease-out group-hover:-translate-y-0.5 group-hover:border-white/15 group-hover:shadow-[0_8px_24px_-12px_rgba(2,6,15,0.8)]"
+      >
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-px opacity-70"
@@ -78,13 +87,16 @@ export function PatientCard({
               Deterioration
             </div>
             <div
-              className="num text-2xl font-semibold tracking-tight"
+              className="num text-2xl font-semibold leading-none tracking-tight transition-colors duration-300"
               style={{ color: meta.color }}
             >
               {detText}
             </div>
+            <div className="mt-1 text-[10px] text-slate-500">
+              last {lastCalledAt ? formatRelative(lastCalledAt) : "—"}
+            </div>
           </div>
-          <div className="shrink-0 overflow-hidden rounded-sm opacity-90">
+          <div className="shrink-0 overflow-hidden rounded-sm opacity-95 transition-opacity duration-200 group-hover:opacity-100">
             <Sparkline
               values={series}
               stroke={meta.color}
@@ -94,21 +106,19 @@ export function PatientCard({
           </div>
         </div>
 
-        <div className="mt-3 flex items-end justify-between gap-3 text-[11px] text-slate-500">
-          <span className="shrink-0 pb-0.5">
-            {p.call_count} {p.call_count === 1 ? "call" : "calls"}
-          </span>
-          <div className="flex min-w-0 flex-1 items-end justify-end gap-2">
-            <span
-              className={
-                "min-w-0 truncate pb-0.5 text-right " +
-                (footerAction ? "max-w-[42%] sm:max-w-[50%] " : "")
-              }
-            >
-              {lastCalledAt ? formatRelative(lastCalledAt) : "no calls yet"}
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/5 pt-3 text-[11px] text-slate-500">
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate">
+              <span className="text-slate-400">Next:</span>{" "}
+              <span className="text-slate-300">
+                {formatNextCall(p.next_call_at)}
+              </span>
             </span>
-            {footerAction}
+            <span className="text-[10px] text-slate-500">
+              {p.call_count} {p.call_count === 1 ? "call" : "calls"} total
+            </span>
           </div>
+          {footerAction}
         </div>
       </Glass>
     </Link>

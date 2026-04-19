@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -11,9 +12,14 @@ from sentinel.config import get_settings
 from sentinel.db import get_db
 
 CODE_TTL_MINUTES = 10
+# Brute-force guard: a 6-digit code has 10^6 possibilities. After this many
+# failed exchange attempts against a single code we burn it. Prevents an
+# attacker from grinding through the 10-minute TTL window.
+MAX_EXCHANGE_ATTEMPTS = 5
 
 
 def _new_code() -> str:
+    """Generate a uniformly random 6-digit code using the CSPRNG."""
     return f"{secrets.randbelow(10**6):06d}"
 
 
@@ -35,6 +41,7 @@ async def generate_pairing_code(*, patient_id: str) -> dict:
                     "expires_at": expires_at,
                     "consumed_at": None,
                     "consumed_by_device_id": None,
+                    "attempts": 0,
                 },
                 upsert=True,
             )
@@ -55,6 +62,10 @@ async def exchange_code(*, code: str, device_info: dict) -> dict:
     doc = await db.pairing_codes.find_one({"_id": code})
     if doc is None:
         raise HTTPException(404, {"error": "code_invalid_or_expired"})
+
+    # Brute-force lockout: too many failed tries against this code.
+    if int(doc.get("attempts", 0)) >= MAX_EXCHANGE_ATTEMPTS:
+        raise HTTPException(429, {"error": "too_many_attempts"})
 
     expires_at = doc.get("expires_at")
     if expires_at is not None and _ensure_tz(expires_at) < now:
@@ -91,6 +102,10 @@ async def exchange_code(*, code: str, device_info: dict) -> dict:
     if result.modified_count == 0:
         # Another request consumed it between our check and update.
         await db.devices.delete_one({"_id": device_id})
+        # Count this as a failed attempt so parallel grinders get locked out.
+        await db.pairing_codes.update_one(
+            {"_id": code}, {"$inc": {"attempts": 1}},
+        )
         raise HTTPException(409, {"error": "code_already_consumed"})
 
     return {
@@ -113,7 +128,10 @@ async def demo_login(*, patient_id: str, passkey: str, device_info: dict) -> dic
     demo session.
     """
     settings = get_settings()
-    if passkey != settings.mobile_demo_passkey:
+    # Constant-time compare; raw `!=` leaks passkey length / prefix via timing.
+    if not hmac.compare_digest(
+        (passkey or "").encode(), settings.mobile_demo_passkey.encode(),
+    ):
         raise HTTPException(401, {"error": "invalid_passkey"})
 
     db = get_db()

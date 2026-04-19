@@ -41,20 +41,6 @@ export type CallRecord = {
   outcome_label?: 'fine' | 'schedule_visit' | 'escalated_911' | null;
 };
 
-export type RegenerateSummaryResponse = {
-  summary_patient: string | null;
-  summary_nurse: string | null;
-};
-
-export type Alert = {
-  id: string;
-  patient_id: string;
-  call_id: string;
-  severity: string;
-  channel: string[];
-  sent_at: string;
-};
-
 export type ApiError =
   | { kind: 'auth'; code: 'device_revoked' | 'invalid_token' | 'malformed_token' }
   | { kind: 'http'; status: number; message: string }
@@ -159,18 +145,11 @@ export const api = {
   },
   getCalls: (creds: Credentials, pid: string) =>
     fetchJson<CallRecord[]>(`/api/patients/${pid}/calls`, creds),
-  getAlerts: (creds: Credentials) => fetchJson<Alert[]>('/api/alerts', creds),
   registerPushToken: (creds: Credentials, body: DevicePushTokenBody) =>
     request<{ ok: true }>('/api/devices/push-token', creds, {
       method: 'POST',
       body,
     }),
-  regenerateSummary: (creds: Credentials, callId: string) =>
-    request<RegenerateSummaryResponse>(
-      `/api/calls/${callId}/summary/regenerate`,
-      creds,
-      { method: 'POST' },
-    ),
   mobileEndCall: (creds: Credentials, conversation_id: string) =>
     request<{ call_id: string }>('/api/calls/mobile-end', creds, {
       method: 'POST',

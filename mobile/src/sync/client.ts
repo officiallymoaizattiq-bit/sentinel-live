@@ -10,6 +10,14 @@ export type PostBatchOk = {
   accepted: number;
   flaggedClockSkew: number;
   idempotentReplay: boolean;
+  /**
+   * Absolute difference between the device clock and the server's `Date`
+   * response header, in seconds. Non-null only when the header is present
+   * and parseable. Values >60s usually indicate a device-clock misconfig
+   * worth surfacing to the user — the backend will start 400ing future
+   * samples once skew exceeds 1h.
+   */
+  serverClockSkewSeconds: number | null;
 };
 
 export type PostBatchErr =
@@ -31,7 +39,14 @@ export async function postVitalsBatch(
   samples: Sample[],
 ): Promise<PostBatchResult> {
   if (samples.length === 0) {
-    return { ok: true, status: 202, accepted: 0, flaggedClockSkew: 0, idempotentReplay: false };
+    return {
+      ok: true,
+      status: 202,
+      accepted: 0,
+      flaggedClockSkew: 0,
+      idempotentReplay: false,
+      serverClockSkewSeconds: null,
+    };
   }
 
   const batchId = uuidv4();
@@ -73,6 +88,7 @@ export async function postVitalsBatch(
       accepted: json.accepted,
       flaggedClockSkew: json.flagged_clock_skew ?? 0,
       idempotentReplay: !!json.idempotent_replay,
+      serverClockSkewSeconds: computeClockSkewSeconds(res.headers.get('Date')),
     };
   }
 
@@ -109,6 +125,20 @@ export async function postVitalsBatch(
 
   const text = await res.text().catch(() => '');
   return { ok: false, kind: 'server', status: res.status, message: text };
+}
+
+/**
+ * Compare device wall-clock against the server's `Date` response header and
+ * return |device - server| in seconds. Returns null if the header is missing
+ * or unparseable. Callers use the magnitude to surface a "your clock looks
+ * wrong" hint — the backend rejects batches outside ±1h anyway (see
+ * docs/backend-contract.md §3 clock skew).
+ */
+function computeClockSkewSeconds(dateHeader: string | null): number | null {
+  if (!dateHeader) return null;
+  const serverMs = Date.parse(dateHeader);
+  if (!Number.isFinite(serverMs)) return null;
+  return Math.abs(Date.now() - serverMs) / 1000;
 }
 
 // Backend wraps errors via FastAPI HTTPException as { detail: { error: "..." } }.

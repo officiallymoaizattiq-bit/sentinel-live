@@ -108,30 +108,55 @@ export async function getPushToken(): Promise<PushTokenInfo | null> {
 
 /**
  * Resolve a token and POST it to the backend so /api/calls/trigger can
- * reach this device. Idempotent — backend upserts by device id. Best-effort:
- * a failure just leaves the previous token in place server-side and the app
- * continues to function.
+ * reach this device. Idempotent — backend upserts by device id.
+ *
+ * Retries transient (network / 5xx) failures with exponential backoff.
+ * Auth failures bubble up immediately so the root layout can route the user
+ * back to the pair screen instead of us spinning on a doomed token.
  */
 export async function registerPushToken(creds: Credentials): Promise<void> {
   const info = await getPushToken();
   if (!info) return;
-  try {
-    await api.registerPushToken(creds, {
-      token: info.token,
-      provider: info.provider,
-      platform: info.platform,
-    });
-    if (__DEV__) {
-      console.log('[push] registered with backend', info.token);
+
+  const body = {
+    token: info.token,
+    provider: info.provider,
+    platform: info.platform,
+  };
+
+  // 4 attempts: 0ms, 1s, 2s, 4s. Keeps total wait <10s so we don't hold up
+  // the dashboard mount, but survives the common "backend just restarted"
+  // blip during local dev.
+  const MAX_ATTEMPTS = 4;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      await api.registerPushToken(creds, body);
+      if (__DEV__) {
+        console.log('[push] registered with backend', info.token);
+      }
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (e instanceof ApiCallError && e.error.kind === 'auth') {
+        // Caller (root layout) handles auth churn elsewhere; rethrow so the
+        // standard auth-failure flow runs instead of swallowing here.
+        throw e;
+      }
+      // Only retry network blips and 5xx. 4xx (other than 401 handled above)
+      // means a schema mismatch — retrying won't help.
+      const retryable =
+        e instanceof ApiCallError &&
+        (e.error.kind === 'network' ||
+          (e.error.kind === 'http' && e.error.status >= 500));
+      if (!retryable) break;
+      if (attempt < MAX_ATTEMPTS - 1) {
+        const delayMs = 1000 * 2 ** attempt;
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
     }
-  } catch (e) {
-    if (e instanceof ApiCallError && e.error.kind === 'auth') {
-      // Caller (root layout) handles auth churn elsewhere; rethrow so the
-      // standard auth-failure flow runs instead of swallowing here.
-      throw e;
-    }
-    if (__DEV__) console.warn('[push] register token failed', e);
   }
+  if (__DEV__) console.warn('[push] register token failed (final)', lastErr);
 }
 
 /**

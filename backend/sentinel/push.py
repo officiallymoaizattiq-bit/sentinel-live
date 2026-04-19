@@ -55,9 +55,19 @@ CALL_PUSH_TTL_SECONDS = 30
 # request.
 EXPO_MAX_BATCH = 100
 
+# Expo request timeout. Short because call invitations are ephemeral — if
+# Expo is down for >10s the notification is stale anyway.
+_EXPO_TIMEOUT_S = 10.0
+
+_SUPPORTED_PLATFORMS = ("ios", "android")
+
 
 async def _list_active_push_tokens(patient_id: str) -> list[str]:
-    """Return Expo push tokens for every non-revoked device of a patient."""
+    """Return Expo push tokens for every non-revoked device of a patient.
+
+    De-duplicates identical tokens (two device rows sharing a token after a
+    re-pair would otherwise double-ring).
+    """
     cursor = get_db().devices.find(
         {
             "patient_id": patient_id,
@@ -66,10 +76,17 @@ async def _list_active_push_tokens(patient_id: str) -> list[str]:
         },
         projection={"push_token": 1, "_id": 1},
     )
+    seen: set[str] = set()
     tokens: list[str] = []
     async for d in cursor:
         tok = d.get("push_token")
-        if isinstance(tok, str) and tok.startswith("ExponentPushToken["):
+        if (
+            isinstance(tok, str)
+            and tok.startswith("ExponentPushToken[")
+            and tok.endswith("]")
+            and tok not in seen
+        ):
+            seen.add(tok)
             tokens.append(tok)
     return tokens
 
@@ -117,7 +134,7 @@ async def _post_to_expo(
         return []
 
     owns_client = client is None
-    c = client or httpx.AsyncClient(timeout=10.0)
+    c = client or httpx.AsyncClient(timeout=_EXPO_TIMEOUT_S)
     try:
         resp = await c.post(
             EXPO_PUSH_URL,
@@ -170,11 +187,14 @@ async def _handle_receipts(
 
     db = get_db()
     for token, r in zip(tokens, receipts):
-        if r.get("status") == "ok":
+        if not isinstance(r, dict) or r.get("status") == "ok":
             continue
-        err = r.get("details", {}).get("error") if isinstance(r.get("details"), dict) else None
-        log.info("expo push not-ok: token=%s err=%s msg=%s",
-                 token[:24] + "...", err, r.get("message"))
+        details = r.get("details")
+        err = details.get("error") if isinstance(details, dict) else None
+        log.info(
+            "expo push not-ok: token=%s err=%s msg=%s",
+            token[:24] + "...", err, r.get("message"),
+        )
         if err == "DeviceNotRegistered":
             await db.devices.update_many(
                 {"push_token": token},
@@ -232,9 +252,14 @@ async def register_push_token(
         # would need a different sender — reject loudly so a future engineer
         # remembers to add the matching backend path.
         raise ValueError(f"unsupported push provider: {provider!r}")
-    if not (isinstance(token, str) and token.startswith("ExponentPushToken[")):
+    if not (
+        isinstance(token, str)
+        and token.startswith("ExponentPushToken[")
+        and token.endswith("]")
+        and len(token) <= 256
+    ):
         raise ValueError("malformed expo push token")
-    if platform not in ("ios", "android"):
+    if platform not in _SUPPORTED_PLATFORMS:
         raise ValueError(f"unsupported platform: {platform!r}")
 
     await get_db().devices.update_one(

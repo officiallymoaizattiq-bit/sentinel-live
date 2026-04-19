@@ -7,12 +7,12 @@ from typing import Deque
 
 from fastapi import HTTPException
 
+from sentinel import events as event_bus
+from sentinel.config import get_settings
 from sentinel.db import get_db
 
 MAX_SAMPLES = 1000
-WINDOW_SECONDS = 60
 BURST_SECONDS = 60
-RATE_PER_MIN = 10
 RATE_BURST = 60
 RATE_PER_DAY = 500
 
@@ -126,8 +126,9 @@ async def ingest_batch(
         }
 
     now = datetime.now(tz=timezone.utc)
-    skew_window_past = now - timedelta(hours=24)
-    skew_window_future = now + timedelta(hours=1)
+    s = get_settings()
+    skew_window_past = now - timedelta(hours=s.vitals_past_skew_hours)
+    skew_window_future = now + timedelta(minutes=s.vitals_future_skew_minutes)
 
     cleaned: list[dict] = []
     flagged = 0
@@ -172,7 +173,6 @@ async def ingest_batch(
         "flagged_clock_skew": flagged,
     })
 
-    from sentinel import events as event_bus
     event_bus.publish({
         "type": "vitals",
         "patient_id": patient_id,

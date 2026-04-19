@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sentinel.config import get_settings
+from pymongo.errors import DuplicateKeyError
+
 from sentinel.db import get_db
 from sentinel.models import Caregiver, Consent, SurgeryType
 
@@ -18,11 +19,25 @@ async def enroll_patient(
     language: str = "en",
     patient_id: str | None = None,
 ) -> str:
+    """Insert a patient + blank care plan. Idempotent when `patient_id` is
+    supplied: if a row with that id already exists, return it unchanged
+    rather than raising a duplicate-key error. Auto-generated ids use uuid4
+    and collide with cryptographic improbability, so that path always
+    inserts.
+    """
     if consent is None:
         raise ValueError("consent required to enroll patient")
     now = datetime.now(tz=timezone.utc)
-    cadence_h = get_settings().call_cadence_hours
     pid = patient_id if patient_id is not None else str(uuid4())
+    db = get_db()
+
+    # Idempotency: caller-supplied pid may already exist (e.g. seed script
+    # reruns). Skip insert in that case instead of 500ing the request.
+    if patient_id is not None:
+        existing = await db.patients.find_one({"_id": pid})
+        if existing is not None:
+            return pid
+
     doc = {
         "_id": pid,
         "name": name,
@@ -38,8 +53,14 @@ async def enroll_patient(
         "call_count": 0,
         "consent": consent.model_dump(),
     }
-    await get_db().patients.insert_one(doc)
-    await get_db().care_plans.insert_one(
+    try:
+        await db.patients.insert_one(doc)
+    except DuplicateKeyError:
+        # Race: another request enrolled this pid between our check and
+        # insert. Treat as success — the row exists either way.
+        return pid
+
+    await db.care_plans.insert_one(
         {
             "_id": str(uuid4()),
             "patient_id": pid,
@@ -50,27 +71,3 @@ async def enroll_patient(
         }
     )
     return pid
-
-
-async def mark_called(patient_id: str) -> None:
-    cadence_h = get_settings().call_cadence_hours
-    await get_db().patients.update_one(
-        {"_id": patient_id},
-        {
-            "$inc": {"call_count": 1},
-            "$set": {
-                "next_call_at": datetime.now(tz=timezone.utc)
-                + timedelta(hours=cadence_h)
-            },
-        },
-    )
-
-
-async def due_patients(limit: int = 50) -> list[dict]:
-    now = datetime.now(tz=timezone.utc)
-    cur = (
-        get_db()
-        .patients.find({"next_call_at": {"$lte": now}})
-        .limit(limit)
-    )
-    return [doc async for doc in cur]

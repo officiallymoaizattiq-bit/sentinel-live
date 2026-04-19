@@ -158,6 +158,27 @@ export function formatRelative(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString();
 }
 
+export function formatNextCall(iso: string | null | undefined): string {
+  if (!iso) return "unscheduled";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "unscheduled";
+  const diff = then - Date.now();
+  const abs = Math.abs(diff);
+  const m = Math.round(abs / 60_000);
+  if (diff <= 0) {
+    if (m < 1) return "due now";
+    if (m < 60) return `overdue ${m}m`;
+    const h = Math.round(m / 60);
+    return `overdue ${h}h`;
+  }
+  if (m < 1) return "in <1m";
+  if (m < 60) return `in ${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `in ${h}h`;
+  const d = Math.round(h / 24);
+  return `in ${d}d`;
+}
+
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);

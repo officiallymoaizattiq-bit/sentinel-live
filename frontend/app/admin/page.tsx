@@ -2,8 +2,11 @@ import { Suspense } from "react";
 import { api } from "@/lib/api";
 import { latestScoredCall } from "@/lib/latestScoredCall";
 import { KpiStrip } from "@/components/dashboard/KpiStrip";
-import { PatientFilters } from "@/components/dashboard/PatientFilters";
 import { PatientGrid } from "@/components/dashboard/PatientGrid";
+import {
+  KpiStripSkeleton,
+  PatientGridSkeleton,
+} from "@/components/ui/Skeleton";
 
 export const revalidate = 0;
 
@@ -50,28 +53,13 @@ export default async function Dashboard() {
   const summaries: Record<string, CallSummary> = Object.fromEntries(summaryEntries);
 
   return (
-    <div className="space-y-6">
-      <Suspense
-        fallback={
-          <div className="mb-6 h-[120px] animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
-        }
-      >
+    <div className="animate-fade-in space-y-6">
+      <Suspense fallback={<KpiStripSkeleton />}>
         <KpiStrip initialPatients={patients} initialSummaries={summaries} />
       </Suspense>
 
       <section className="min-w-0 space-y-4">
-        <Suspense
-          fallback={
-            <div className="h-40 animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
-          }
-        >
-          <PatientFilters />
-        </Suspense>
-        <Suspense
-          fallback={
-            <div className="h-64 animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
-          }
-        >
+        <Suspense fallback={<PatientGridSkeleton count={4} />}>
           <PatientGrid initialPatients={patients} initialSummaries={summaries} />
         </Suspense>
       </section>

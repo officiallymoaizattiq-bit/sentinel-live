@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, HTTPException, Response
 from pydantic import BaseModel
@@ -27,6 +27,14 @@ def _b64dec(s: str) -> bytes:
     return urlsafe_b64decode(s + padding)
 
 
+def _is_secure_origin() -> bool:
+    """Emit Secure cookies when the public origin is HTTPS. Local dev over
+    http://localhost:8000 still works without Secure.
+    """
+    base = (get_settings().public_base_url or "").lower()
+    return base.startswith("https://")
+
+
 def _sign(payload: dict) -> str:
     secret = get_settings().session_secret.encode()
     body = _b64enc(json.dumps(payload, separators=(",", ":")).encode())
@@ -35,6 +43,13 @@ def _sign(payload: dict) -> str:
 
 
 def _verify(token: str) -> dict | None:
+    """Constant-time signature verify + server-side session-age check.
+
+    Returns None for any failure so callers raise a uniform 401. Rejects
+    sessions older than COOKIE_MAX_AGE even if a cookie TTL was tampered
+    with client-side (cookies are HttpOnly but not integrity-bound to
+    browser clock).
+    """
     try:
         body, sig = token.split(".")
     except ValueError:
@@ -45,8 +60,21 @@ def _verify(token: str) -> dict | None:
         return None
     try:
         payload = json.loads(_b64dec(body))
-    except Exception:
+    except (ValueError, TypeError, json.JSONDecodeError):
         return None
+    if not isinstance(payload, dict):
+        return None
+    iat = payload.get("iat")
+    if isinstance(iat, str):
+        try:
+            iat_dt = datetime.fromisoformat(iat.replace("Z", "+00:00"))
+            if iat_dt.tzinfo is None:
+                iat_dt = iat_dt.replace(tzinfo=timezone.utc)
+            age = (datetime.now(tz=timezone.utc) - iat_dt).total_seconds()
+            if age > COOKIE_MAX_AGE or age < -60:  # allow tiny clock skew
+                return None
+        except ValueError:
+            return None
     return payload
 
 
@@ -60,14 +88,14 @@ class LoginBody(BaseModel):
 async def login(body: LoginBody, response: Response):
     s = get_settings()
     if body.role == "admin":
-        if body.passkey != s.admin_passkey:
+        if not hmac.compare_digest(body.passkey.encode(), s.admin_passkey.encode()):
             raise HTTPException(401, {"error": "invalid_passkey"})
         payload = {
             "role": "admin",
             "iat": datetime.now(tz=timezone.utc).isoformat(),
         }
     elif body.role == "patient":
-        if body.passkey != s.patient_passkey:
+        if not hmac.compare_digest(body.passkey.encode(), s.patient_passkey.encode()):
             raise HTTPException(401, {"error": "invalid_passkey"})
         if not body.patient_id:
             raise HTTPException(401, {"error": "unknown_patient"})
@@ -83,9 +111,15 @@ async def login(body: LoginBody, response: Response):
         raise HTTPException(400, {"error": "invalid_role"})
 
     token = _sign(payload)
+    secure = _is_secure_origin()
     response.set_cookie(
-        key=COOKIE_NAME, value=token, max_age=COOKIE_MAX_AGE,
-        httponly=True, samesite="lax", path="/",
+        key=COOKIE_NAME,
+        value=token,
+        max_age=COOKIE_MAX_AGE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
     )
     out = {"role": payload["role"]}
     if payload["role"] == "patient":

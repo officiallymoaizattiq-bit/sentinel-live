@@ -33,8 +33,11 @@ _loop: asyncio.AbstractEventLoop | None = None
 
 def _run_coro(coro_fn):
     """Submit an async callable onto the captured event loop.
-    APScheduler job bodies run in its thread-pool executor — no loop — so we
-    submit via run_coroutine_threadsafe on the loop captured in start().
+
+    APScheduler's AsyncIOScheduler would normally schedule coroutine
+    callables directly on its loop, but we explicitly thread-safely submit
+    to the loop captured in `start()` so job scheduling is safe even if the
+    scheduler's internal executor ever changes.
     """
     def _wrap() -> None:
         if _loop is None or _loop.is_closed():
@@ -51,7 +54,9 @@ def start() -> AsyncIOScheduler:
         _loop = asyncio.get_running_loop()
     except RuntimeError:
         _loop = asyncio.new_event_loop()
-    _sched = AsyncIOScheduler()
+    # Explicit UTC timezone — APScheduler otherwise falls back to local tz,
+    # which skews `interval` next_run bookkeeping around DST boundaries.
+    _sched = AsyncIOScheduler(timezone=timezone.utc)
     _sched.add_job(_run_coro(tick), trigger="interval", seconds=60,
                    id="sentinel_tick", replace_existing=True)
     _sched.add_job(_run_coro(_run_audit), trigger="interval", seconds=300,
@@ -120,7 +125,10 @@ async def auto_finalize_conversations() -> list[str]:
 
     db = get_db()
     finalized: list[str] = []
-    latest_patient = await db.patients.find({}).sort("_id", -1).limit(1).to_list(1)
+    # Patient _id is a uuid4 string, so sort-by-_id is not truly "most
+    # recent"; use next_call_at descending (set to now+5min at enrollment)
+    # as a stable proxy for recency.
+    latest_patient = await db.patients.find({}).sort("next_call_at", -1).limit(1).to_list(1)
     fallback_pid = latest_patient[0]["_id"] if latest_patient else None
 
     for convo in getattr(page, "conversations", []) or []:

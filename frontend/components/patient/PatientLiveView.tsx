@@ -4,14 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import type { Call, CallRecord } from "@/lib/api";
 import { api } from "@/lib/api";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
-import { formatTrajectoryAxisLabel } from "@/lib/format";
+import {
+  formatTrajectoryAxisLabel,
+  scoreToSeverity,
+} from "@/lib/format";
+import { SeverityChip } from "@/components/ui/SeverityChip";
 import { useEventStream } from "@/lib/hooks/useEventStream";
 import { CallLogCard } from "@/components/patient/CallLogCard";
 import { DeteriorationPatientPanel } from "@/components/patient/DeteriorationPatientPanel";
 import { Fake911Modal } from "@/components/patient/Fake911Modal";
+import { IncomingCallCard } from "@/components/patient/IncomingCallCard";
+import { MicPrimer } from "@/components/patient/MicPrimer";
 
 /** Official embed (see ElevenLabs widget docs). Legacy elevenlabs.io URL often fails to register the element. */
-const WIDGET_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
+const WIDGET_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed@0.11.4/dist/index.js";
 
 /** Convai web component instance (methods not in HTMLElement typings). */
 type ConvaiElement = HTMLElement & {
@@ -54,16 +60,38 @@ export function PatientLiveView({
   const [show911, setShow911] = useState(false);
   const convaiRef = useRef<HTMLElement | null>(null);
 
+  const [widgetReady, setWidgetReady] = useState(false);
+  const [widgetError, setWidgetError] = useState<string | null>(null);
   useEffect(() => {
+    const checkReady = () => {
+      if (typeof window !== "undefined" && window.customElements?.get("elevenlabs-convai")) {
+        setWidgetReady(true);
+        return true;
+      }
+      return false;
+    };
+    if (checkReady()) return;
+
     const existing = document.querySelector(
-      `script[src^="${WIDGET_SRC}"],script[src*="convai-widget-embed"]`,
+      `script[src*="convai-widget-embed"]`,
     );
-    if (existing) return;
-    const s = document.createElement("script");
-    s.src = WIDGET_SRC;
-    s.async = true;
-    s.type = "text/javascript";
-    document.body.appendChild(s);
+    let script: HTMLScriptElement | null = existing as HTMLScriptElement | null;
+    if (!existing) {
+      script = document.createElement("script");
+      script.src = WIDGET_SRC;
+      script.async = true;
+      script.type = "module";
+      script.crossOrigin = "anonymous";
+      script.onerror = () => setWidgetError("Widget script failed to load");
+      document.head.appendChild(script);
+    }
+    const iv = window.setInterval(() => {
+      if (checkReady()) window.clearInterval(iv);
+    }, 200);
+    const fail = window.setTimeout(() => {
+      if (!checkReady()) setWidgetError("Widget did not register within 10s");
+    }, 10000);
+    return () => { window.clearInterval(iv); window.clearTimeout(fail); };
   }, []);
 
   /** Mic / getUserMedia must run in the user-gesture stack — never after async gaps. */
@@ -75,7 +103,40 @@ export function PatientLiveView({
     return true;
   };
 
+  /**
+   * iOS Safari blocks AudioContext until it is created/resumed from a direct
+   * user gesture. Call this synchronously inside any tap handler that will
+   * eventually produce audio (Answer / Start voice) so the widget's later
+   * playback isn't silently muted.
+   */
+  const unlockAudio = () => {
+    try {
+      const Ctx =
+        (window as unknown as {
+          AudioContext?: typeof AudioContext;
+          webkitAudioContext?: typeof AudioContext;
+        }).AudioContext ||
+        (window as unknown as {
+          webkitAudioContext?: typeof AudioContext;
+        }).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      // Resume in same tick — if it returns a promise, that's fine, the
+      // gesture has already been consumed by the time we awaited nothing.
+      void ctx.resume?.();
+      // Play a silent buffer to fully unlock audio on iOS.
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {
+      /* best-effort */
+    }
+  };
+
   const startVoiceFromUserGesture = () => {
+    unlockAudio();
     if (!primeConvaiElement()) return;
     const el = convaiRef.current as ConvaiElement | null;
     try {
@@ -156,7 +217,7 @@ export function PatientLiveView({
     };
   }, [widgetOpen, patientId]);
 
-  const { connected } = useEventStream((e) => {
+  const { connected, reconnectAt } = useEventStream((e) => {
     if (e.type === "pending_call" && e.patient_id === patientId) {
       setIncoming({ at: e.at, mode: e.mode });
     }
@@ -192,52 +253,65 @@ export function PatientLiveView({
   const lastWithScore = [...calls].reverse().find((c) => c.score != null) ?? null;
   const deterioration = lastWithScore?.score?.deterioration ?? null;
 
+  const reconnecting = !connected && reconnectAt != null;
+  const latestSeverity = scoreToSeverity(deterioration);
+
   return (
-    <div className="mx-auto max-w-lg space-y-6 p-4">
-      <header>
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">{patientName}</h1>
-          <span className={
-            "rounded-full px-2 py-0.5 text-[10px] " +
-            (connected
-              ? "border border-emerald-400/40 text-emerald-300"
-              : "border border-yellow-400/40 text-yellow-300 animate-pulse")
-          }>
-            {connected ? "● live" : "● connecting"}
-          </span>
+    <div className="mx-auto max-w-lg space-y-6 p-4 safe-pb">
+      <header className="safe-pt">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">{patientName}</h1>
+          <div className="flex items-center gap-2">
+            {reconnecting && (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 rounded-full border border-yellow-400/40 bg-yellow-500/10 px-2 py-0.5 text-[10px] text-yellow-200"
+              >
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-yellow-300" />
+                reconnecting…
+              </span>
+            )}
+            <span
+              className={
+                "rounded-full px-2 py-0.5 text-[10px] transition-colors duration-200 " +
+                (connected
+                  ? "border border-emerald-400/40 text-emerald-300"
+                  : "border border-yellow-400/40 text-yellow-300 animate-pulse")
+              }
+            >
+              {connected ? "● live" : "● connecting"}
+            </span>
+          </div>
         </div>
+        {deterioration != null && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+            <SeverityChip severity={latestSeverity} size="sm" pulse />
+            <span>
+              Latest score{" "}
+              <span className="num text-slate-200">
+                {deterioration.toFixed(2)}
+              </span>
+            </span>
+          </div>
+        )}
       </header>
 
       <DeteriorationPatientPanel deterioration={deterioration} />
 
+      {!widgetOpen && !incoming && <MicPrimer />}
+
       {incoming && !widgetOpen && (
-        <div className="rounded-2xl border border-emerald-400/40 bg-emerald-950/40 p-4">
-          <div className="mb-2 text-sm font-medium text-emerald-200">
-            Sentinel is calling you
-          </div>
-          <p className="mb-3 text-xs text-emerald-300/80">
-            Your care team would like a quick check-in.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setIncoming(null);
-                setWidgetOpen(true);
-              }}
-              className="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-black"
-            >
-              Answer
-            </button>
-            <button
-              type="button"
-              onClick={() => setIncoming(null)}
-              className="rounded-full border border-white/20 px-4 py-1.5 text-sm text-slate-300"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
+        <IncomingCallCard
+          mode={incoming.mode}
+          onAnswer={() => {
+            // Must run inside this direct tap handler so Safari registers the
+            // gesture for AudioContext + mic. Unlock audio synchronously.
+            unlockAudio();
+            setIncoming(null);
+            setWidgetOpen(true);
+          }}
+          onDecline={() => setIncoming(null)}
+        />
       )}
 
       {widgetOpen && (
@@ -315,47 +389,31 @@ export function PatientLiveView({
                   </div>
                 </div>
               ) : null}
-              <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
-                Tap the button below to allow the microphone — browsers require a
-                direct tap (starting the call from code alone will not show the
-                mic prompt). If nothing happens, confirm this site is allowed in
-                the lock / mic icon in the address bar and that your ElevenLabs
-                agent allows this domain in its security allowlist.
+              <p className="mb-3 text-[12px] leading-relaxed text-slate-400">
+                Tap the orb below to start. Allow the microphone when Safari
+                asks.
               </p>
-              <button
-                type="button"
-                onClick={startVoiceFromUserGesture}
-                className="mb-3 w-full rounded-xl bg-emerald-500/90 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-emerald-400"
-              >
-                Start voice check-in
-              </button>
-              <div className="relative min-h-[220px] w-full">
-                <elevenlabs-convai
-                  ref={convaiRef}
-                  variant="expanded"
-                  {...{ "agent-id": agentId.trim() }}
-                />
-              </div>
+              {widgetError ? (
+                <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+                  {widgetError}. Check network + reload.
+                </div>
+              ) : !widgetReady ? (
+                <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-white/10 bg-white/5 text-sm text-slate-400">
+                  Loading voice widget…
+                </div>
+              ) : (
+                <div className="relative min-h-[320px] w-full">
+                  <elevenlabs-convai
+                    key={agentId.trim()}
+                    ref={convaiRef}
+                    variant="expanded"
+                    {...{ "agent-id": agentId.trim() }}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
-      )}
-
-      {last?.score && (
-        <section
-          className={
-            "rounded-2xl border p-4 " +
-            (last.score.recommended_action === "suggest_911"
-              ? "border-red-500/40 bg-red-950/40"
-              : "border-white/10 bg-white/5")
-          }
-        >
-          <div className="mb-1 text-sm text-slate-400">Latest check-in</div>
-          <div className="text-lg">{last.score.summary}</div>
-          <div className="mt-2 text-xs text-slate-500">
-            {new Date(last.called_at).toLocaleString()}
-          </div>
-        </section>
       )}
 
       <section>

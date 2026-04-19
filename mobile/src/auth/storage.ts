@@ -67,12 +67,3 @@ export async function getSyncCursor(): Promise<string | null> {
 export async function setSyncCursor(iso: string): Promise<void> {
   await SecureStore.setItemAsync(KEYS.syncCursor, iso);
 }
-
-/**
- * Wipes just the sync cursor, leaving auth credentials intact. Used by the
- * "Backfill last 24h" affordance on the dashboard so the next sync re-reads
- * the full initial-lookback window instead of the tiny incremental delta.
- */
-export async function clearSyncCursor(): Promise<void> {
-  await SecureStore.deleteItemAsync(KEYS.syncCursor);
-}

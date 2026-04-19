@@ -9,6 +9,14 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      screens: {
+        /**
+         * Extra-small breakpoint for iPhone SE / mini (≤ 375px logical width).
+         * Tailwind's default `sm` starts at 640px — too wide for iPhones in
+         * portrait. Use `xs:` for tweaks that matter on small-phone screens.
+         */
+        xs: "400px",
+      },
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
@@ -36,6 +44,50 @@ export default {
           warn: "#FB923C",
           crit: "#F43F5E",
         },
+        /**
+         * Semantic surface tokens layered over the canvas gradient.
+         * Use these instead of raw `bg-white/[0.04]` when expressing intent
+         * (panel background, hover state, subtle raise). Raw utilities stay
+         * untouched for backwards compatibility.
+         */
+        surface: {
+          1: "rgba(255,255,255,0.03)",
+          2: "rgba(255,255,255,0.055)",
+          3: "rgba(255,255,255,0.08)",
+          hover: "rgba(255,255,255,0.06)",
+          sunken: "rgba(6,13,26,0.85)",
+        },
+        hairline: {
+          DEFAULT: "rgba(255,255,255,0.10)",
+          strong: "rgba(255,255,255,0.16)",
+          subtle: "rgba(255,255,255,0.06)",
+        },
+        ink: {
+          /** Body copy default. */
+          DEFAULT: "#E2E8F0",
+          /** Muted / secondary label text. */
+          muted: "#94A3B8",
+          /** Faint tertiary (captions, timestamps). */
+          faint: "#64748B",
+          /** High-emphasis on glass. */
+          on: "#F8FAFC",
+        },
+      },
+      textColor: {
+        /** Semantic text aliases. */
+        muted: "#94A3B8",
+        faint: "#64748B",
+      },
+      borderColor: {
+        hairline: "rgba(255,255,255,0.10)",
+        "hairline-strong": "rgba(255,255,255,0.16)",
+        "hairline-subtle": "rgba(255,255,255,0.06)",
+      },
+      backgroundColor: {
+        "surface-1": "rgba(255,255,255,0.03)",
+        "surface-2": "rgba(255,255,255,0.055)",
+        "surface-3": "rgba(255,255,255,0.08)",
+        "surface-hover": "rgba(255,255,255,0.06)",
       },
       backdropBlur: {
         xs: "4px",
@@ -90,6 +142,14 @@ export default {
           "0%": { opacity: "0", transform: "translateY(8px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        fadeIn: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        liftIn: {
+          "0%": { opacity: "0", transform: "translateY(4px) scale(0.98)" },
+          "100%": { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
       },
       animation: {
         aurora: "aurora 32s ease-in-out infinite",
@@ -97,6 +157,11 @@ export default {
         "pulse-ring": "pulseRing 2s cubic-bezier(0.4,0,0.6,1) infinite",
         shimmer: "shimmer 2.5s linear infinite",
         "float-in": "floatIn 0.5s ease-out both",
+        "fade-in": "fadeIn 0.35s ease-out both",
+        "lift-in": "liftIn 0.35s ease-out both",
+      },
+      transitionTimingFunction: {
+        "out-expo": "cubic-bezier(0.16, 1, 0.3, 1)",
       },
     },
   },
