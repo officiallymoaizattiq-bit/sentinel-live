@@ -1,24 +1,17 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { Button, LiveBadge, palette, radius, space } from './ui';
+import { LiveBadge, palette, radius, space } from './ui';
 
 type Props = {
   connected: boolean;
-  onSyncPress: () => void | Promise<void>;
-  syncing: boolean;
   profileInitials: string;
 };
 
 /**
  * Matches the web AppShell top bar: Sentinel mark + title, live pill,
- * compact Sync, static initials avatar.
+ * static initials avatar. Background sync runs on an interval — no button.
  */
-export function DashboardTopBar({
-  connected,
-  onSyncPress,
-  syncing,
-  profileInitials,
-}: Props) {
+export function DashboardTopBar({ connected, profileInitials }: Props) {
   return (
     <View style={styles.bar}>
       <View style={styles.brand}>
@@ -31,13 +24,6 @@ export function DashboardTopBar({
 
       <View style={styles.actions}>
         <LiveBadge connected={connected} />
-        <Button
-          label="Sync"
-          onPress={() => void onSyncPress()}
-          loading={syncing}
-          variant="outline"
-          compact
-        />
         <View
           style={styles.avatar}
           accessibilityRole="image"

@@ -32,6 +32,18 @@ export type CallRecord = {
   similar_calls: { case_id: string; similarity: number; outcome: string }[];
   short_call: boolean;
   llm_degraded: boolean;
+  ended_at?: string | null;
+  end_reason?: 'agent_signal' | 'timeout_40s' | 'manual' | null;
+  summary_patient?: string | null;
+  summary_nurse?: string | null;
+  summaries_generated_at?: string | null;
+  summaries_error?: string | null;
+  outcome_label?: 'fine' | 'schedule_visit' | 'escalated_911' | null;
+};
+
+export type RegenerateSummaryResponse = {
+  summary_patient: string | null;
+  summary_nurse: string | null;
 };
 
 export type Alert = {
@@ -153,4 +165,10 @@ export const api = {
       method: 'POST',
       body,
     }),
+  regenerateSummary: (creds: Credentials, callId: string) =>
+    request<RegenerateSummaryResponse>(
+      `/api/calls/${callId}/summary/regenerate`,
+      creds,
+      { method: 'POST' },
+    ),
 };
