@@ -314,104 +314,21 @@ export function PatientLiveView({
         />
       )}
 
-      {widgetOpen && (
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          {!agentId.trim() ? (
-            <div className="space-y-3 text-sm text-slate-300">
-              <p className="font-medium text-amber-200/90">
-                Voice check-in is not configured
-              </p>
-              <p className="text-xs leading-relaxed text-slate-400">
-                Set{" "}
-                <code className="rounded bg-black/30 px-1 py-0.5 text-[11px] text-slate-200">
-                  NEXT_PUBLIC_ELEVENLABS_AGENT_ID
-                </code>{" "}
-                in <code className="text-[11px]">frontend/.env.local</code> to your
-                public Conversational AI agent ID, then restart{" "}
-                <code className="text-[11px]">npm run dev</code>.
-              </p>
-              <button
-                type="button"
-                onClick={() => setWidgetOpen(false)}
-                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/5"
-              >
-                Close
-              </button>
+      {widgetOpen && agentId.trim() && (
+        <div className="flex w-full items-center justify-center">
+          {widgetError ? (
+            <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+              {widgetError}. Check network + reload.
             </div>
+          ) : !widgetReady ? (
+            <div className="text-sm text-slate-400">Loading voice widget…</div>
           ) : (
-            <>
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-semibold">
-                  Live check-in
-                  {secondsLeft != null && (
-                    <span className="ml-2 text-[11px] text-slate-400">
-                      auto-ends in {Math.max(0, secondsLeft)}s
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    id="demoSeverity"
-                    defaultValue="none"
-                    className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-200"
-                  >
-                    <option value="none">Fine</option>
-                    <option value="nurse_alert">Schedule visit</option>
-                    <option value="suggest_911">911</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const sev = (
-                        document.getElementById("demoSeverity") as HTMLSelectElement
-                      )?.value;
-                      try {
-                        await api.widgetEndCall(patientId, sev);
-                      } catch {
-                        /* */
-                      }
-                      setWidgetOpen(false);
-                    }}
-                    className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
-                  >
-                    End & summarize
-                  </button>
-                </div>
-              </div>
-              {wrappingUp ? (
-                <div className="mb-3 rounded-xl border border-accent-400/40 bg-accent-500/10 p-3">
-                  <div className="text-sm font-semibold text-slate-100">
-                    Sending your answers to your care team…
-                  </div>
-                  <div className="mt-1 text-xs text-slate-300/90">
-                    A nurse will follow up if anything needs attention. You can
-                    hang up now.
-                  </div>
-                </div>
-              ) : null}
-              <p className="mb-3 text-[12px] leading-relaxed text-slate-400">
-                Tap the orb below to start. Allow the microphone when Safari
-                asks.
-              </p>
-              {widgetError ? (
-                <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-                  {widgetError}. Check network + reload.
-                </div>
-              ) : !widgetReady ? (
-                <div className="flex min-h-[320px] items-center justify-center rounded-lg border border-white/10 bg-white/5 text-sm text-slate-400">
-                  Loading voice widget…
-                </div>
-              ) : (
-                <div className="relative min-h-[320px] w-full">
-                  <elevenlabs-convai
-                    key={agentId.trim()}
-                    ref={convaiRef}
-                    variant="expanded"
-                    {...{ "agent-id": agentId.trim() }}
-                  />
-                </div>
-              )}
-            </>
+            <elevenlabs-convai
+              key={agentId.trim()}
+              ref={convaiRef}
+              variant="expanded"
+              {...{ "agent-id": agentId.trim() }}
+            />
           )}
         </div>
       )}
