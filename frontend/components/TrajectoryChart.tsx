@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -28,6 +28,22 @@ export type TrajectoryPoint = {
   outcome_label?: "fine" | "schedule_visit" | "escalated_911";
 };
 
+/**
+ * Indices of x-axis ticks to show (spread across the series, max `maxTicks`).
+ * Index-based (not by `t` string) so duplicate date labels on many rows do not
+ * each render a tick at a different x position.
+ */
+function evenAxisTickIndices(length: number, maxTicks: number): number[] {
+  if (length <= 0) return [];
+  const cap = Math.min(maxTicks, length);
+  if (length === 1) return [0];
+  const idx = new Set<number>();
+  for (let i = 0; i < cap; i++) {
+    idx.add(Math.round((i * (length - 1)) / (cap - 1)));
+  }
+  return Array.from(idx).sort((a, b) => a - b);
+}
+
 const OUTCOME_COLOR: Record<string, string> = {
   fine: "#34D399",
   schedule_visit: "#FBBF24",
@@ -38,21 +54,35 @@ function OutcomeMarkers({
   data,
   xAxisMap,
   yAxisMap,
+  offset,
+  width,
 }: {
   data?: TrajectoryPoint[];
   xAxisMap?: Record<string, { scale: (v: string) => number }>;
   yAxisMap?: Record<string, { scale: (v: number) => number }>;
+  offset?: { left: number; right: number; top: number; bottom: number };
+  width?: number;
 }) {
   if (!data || !xAxisMap || !yAxisMap) return null;
   const xScale = Object.values(xAxisMap)[0]?.scale;
   const yScale = Object.values(yAxisMap)[0]?.scale;
   if (!xScale || !yScale) return null;
+  const plotLeft = offset?.left ?? 0;
+  const plotRight =
+    width != null && width > 0 ? width - (offset?.right ?? 0) : null;
   return (
     <>
       {data.map((p, i) => {
         if (!p.outcome_label || !OUTCOME_COLOR[p.outcome_label]) return null;
         const cx = xScale(p.t);
         const cy = yScale(p.deterioration);
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) return null;
+        if (
+          plotRight != null &&
+          (cx < plotLeft + 4 || cx > plotRight - 4)
+        ) {
+          return null;
+        }
         return (
           <circle
             key={i}
@@ -108,11 +138,15 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
     last != null
       ? severityMeta(scoreToSeverity(last.deterioration)).color
       : "#94a3b8";
+  const xTickIndexSet = useMemo(
+    () => new Set(evenAxisTickIndices(points.length, 5)),
+    [points],
+  );
 
   return (
     <div className="h-[260px] w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={points} margin={{ top: 12, right: 8, left: -12, bottom: 0 }}>
+        <AreaChart data={points} margin={{ top: 12, right: 8, left: 4, bottom: 8 }}>
           <CartesianGrid
             strokeDasharray="3 6"
             stroke="rgba(148,163,184,0.08)"
@@ -140,11 +174,36 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
 
           <XAxis
             dataKey="t"
+            type="category"
             stroke="rgba(148,163,184,0.6)"
-            tick={{ fontSize: 10, fill: "rgba(148,163,184,0.7)" }}
             tickLine={false}
-            interval={0}
             axisLine={{ stroke: "rgba(148,163,184,0.1)" }}
+            height={36}
+            interval={0}
+            tick={(props: {
+              x: number;
+              y: number;
+              payload: { value: string };
+              index: number;
+            }) => {
+              const { x, y, payload, index } = props;
+              if (!xTickIndexSet.has(index)) {
+                return <g key={`tick-skip-${index}`} />;
+              }
+              return (
+                <text
+                  key={`tick-${index}`}
+                  x={x}
+                  y={y}
+                  dy={14}
+                  fill="rgba(148,163,184,0.7)"
+                  fontSize={10}
+                  textAnchor="middle"
+                >
+                  {payload.value}
+                </text>
+              );
+            }}
           />
           <YAxis
             domain={[0, 1]}
@@ -152,7 +211,7 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
             tick={{ fontSize: 10, fill: "rgba(148,163,184,0.7)" }}
             tickLine={false}
             axisLine={false}
-            width={40}
+            width={44}
           />
           <Tooltip
             content={<GlassTooltip />}

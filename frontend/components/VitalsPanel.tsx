@@ -87,18 +87,42 @@ function toChartPoints(vitals: Vital[], kind: string): ChartPoint[] {
     .sort((a, b) => a.ts - b.ts);
 }
 
-function latestNumeric(vitals: Vital[], kind: string): Vital | null {
+function latestNumeric(
+  vitals: Vital[],
+  kind: string,
+  latestByKind: Record<string, Vital> | null,
+): Vital | null {
+  const fromApi = latestByKind?.[kind];
+  if (fromApi && typeof fromApi.value === "number") return fromApi;
   const rows = vitals.filter(
-    (v) => v.kind === kind && typeof v.value === "number"
+    (v) => v.kind === kind && typeof v.value === "number",
   );
   if (!rows.length) return null;
   return rows.reduce((a, b) =>
-    new Date(a.t).getTime() >= new Date(b.t).getTime() ? a : b
+    new Date(a.t).getTime() >= new Date(b.t).getTime() ? a : b,
   );
 }
 
 const selectClass =
   "w-full max-w-[220px] cursor-pointer appearance-none rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 pr-10 text-sm text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition focus:border-accent-400/45 focus:outline-none scheme-dark";
+
+const WINDOW_HOURS = [1, 2, 8] as const;
+const BUCKETS = 12;
+
+type WrappedVitalsPayload = {
+  points: Vital[];
+  latest: Record<string, Vital>;
+  window_hours: number;
+  buckets: number;
+  anchored_from?: string;
+  anchored_until?: string;
+};
+
+function isWrappedVitals(data: unknown): data is WrappedVitalsPayload {
+  if (data === null || typeof data !== "object") return false;
+  const o = data as Record<string, unknown>;
+  return Array.isArray(o.points) && typeof o.latest === "object";
+}
 
 function VitalsTooltip({
   active,
@@ -133,6 +157,14 @@ function VitalsTooltip({
 
 export function VitalsPanel({ patientId }: { patientId: string }) {
   const [vitals, setVitals] = useState<Vital[] | null>(null);
+  const [latestByKind, setLatestByKind] = useState<Record<
+    string,
+    Vital
+  > | null>(null);
+  const [windowHours, setWindowHours] =
+    useState<(typeof WINDOW_HOURS)[number]>(2);
+  /** ISO time of newest sample used to anchor the window (record time, not "now"). */
+  const [anchorUntilIso, setAnchorUntilIso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedKind, setSelectedKind] = useState<string>("");
 
@@ -140,14 +172,34 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
     let alive = true;
     const pull = async () => {
       try {
+        const params = new URLSearchParams({
+          hours: String(windowHours),
+          max_points: String(BUCKETS),
+        });
         const r = await fetch(
-          `/api/patients/${patientId}/vitals?hours=24`,
-          { cache: "no-store" }
+          `/api/patients/${patientId}/vitals?${params.toString()}`,
+          { cache: "no-store" },
         );
         if (!r.ok) throw new Error(`${r.status}`);
-        const v = (await r.json()) as Vital[];
+        const raw: unknown = await r.json();
         if (alive) {
-          setVitals(v);
+          if (Array.isArray(raw)) {
+            setVitals(raw);
+            setLatestByKind(null);
+            setAnchorUntilIso(null);
+          } else if (isWrappedVitals(raw)) {
+            setVitals(raw.points);
+            setLatestByKind(raw.latest);
+            setAnchorUntilIso(
+              typeof raw.anchored_until === "string"
+                ? raw.anchored_until
+                : null,
+            );
+          } else {
+            setVitals([]);
+            setLatestByKind(null);
+            setAnchorUntilIso(null);
+          }
           setError(null);
         }
       } catch (e) {
@@ -160,7 +212,7 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
       alive = false;
       clearInterval(id);
     };
-  }, [patientId]);
+  }, [patientId, windowHours]);
 
   const numericKinds = useMemo(() => {
     if (!vitals) return [];
@@ -168,12 +220,17 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
     for (const v of vitals) {
       if (typeof v.value === "number") kinds.add(v.kind);
     }
+    if (latestByKind) {
+      for (const [k, v] of Object.entries(latestByKind)) {
+        if (typeof v.value === "number") kinds.add(k);
+      }
+    }
     const ranked = PREFERRED_ORDER.filter((k) => kinds.has(k));
     const rest = [...kinds]
       .filter((k) => !PREFERRED_ORDER.includes(k))
       .sort();
     return [...ranked, ...rest];
-  }, [vitals]);
+  }, [vitals, latestByKind]);
 
   useEffect(() => {
     if (!numericKinds.length) return;
@@ -194,17 +251,29 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
       <Glass className="p-4 text-sm text-slate-400">Loading vitals…</Glass>
     );
   }
-  if (vitals.length === 0) {
+  const hasAnyLatest =
+    latestByKind != null && Object.keys(latestByKind).length > 0;
+  if (vitals.length === 0 && !hasAnyLatest) {
     return (
       <Glass className="p-6 text-center text-sm text-slate-400">
-        No vitals in the last 24 hours. Pair a wearable via the mobile app to
-        stream data here.
+        No vitals in this window. Pair a wearable via the mobile app to stream
+        data here.
+      </Glass>
+    );
+  }
+
+  if (!numericKinds.length) {
+    return (
+      <Glass className="p-6 text-center text-sm text-slate-400">
+        No numeric vitals in this window.
       </Glass>
     );
   }
 
   const series = selectedKind ? toChartPoints(vitals, selectedKind) : [];
-  const latest = selectedKind ? latestNumeric(vitals, selectedKind) : null;
+  const latest = selectedKind
+    ? latestNumeric(vitals, selectedKind, latestByKind)
+    : null;
   const stroke = STROKE[selectedKind] ?? "#93c5fd";
 
   return (
@@ -215,10 +284,47 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
             Wearable vitals
           </div>
           <div className="text-[11px] text-slate-400">
-            Last 24 hours · switch metric below
+            Last {windowHours}h of recorded data (window ends at latest upload,
+            not the wall clock) · {BUCKETS}{" "}
+            equal buckets (~{Math.round((windowHours * 60) / BUCKETS)} min wide);
+            one dot per bucket that has samples
           </div>
+          {anchorUntilIso ? (
+            <div className="mt-0.5 text-[10px] text-slate-500">
+              Newest sample in this view:{" "}
+              {new Date(anchorUntilIso).toLocaleString([], {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
+          <span className="text-[11px] text-slate-400">Window</span>
+          <div
+            className="flex rounded-xl border border-white/10 bg-slate-950/70 p-0.5"
+            role="group"
+            aria-label="Vitals time window"
+          >
+            {WINDOW_HOURS.map((h) => (
+              <button
+                key={h}
+                type="button"
+                onClick={() => setWindowHours(h)}
+                className={
+                  "rounded-lg px-2.5 py-1.5 text-xs font-medium transition " +
+                  (windowHours === h
+                    ? "bg-white/10 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200")
+                }
+              >
+                {h}h
+              </button>
+            ))}
+          </div>
           <label className="text-[11px] text-slate-400">Metric</label>
           <div className="relative">
             <select

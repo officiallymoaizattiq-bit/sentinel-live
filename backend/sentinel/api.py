@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Form, Header, HTTPException, Path, Response
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Form,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic import BaseModel as _PM
@@ -437,25 +447,45 @@ async def vitals_batch(
 
 
 @router.get("/patients/{pid}/vitals")
-async def patient_vitals(pid: str, hours: int = 2):
-    from datetime import datetime, timedelta, timezone
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+async def patient_vitals(
+    pid: str,
+    hours: int = Query(default=2, ge=1, le=168),
+    max_points: int | None = Query(
+        default=None,
+        ge=1,
+        le=48,
+        description="When set, return ~this many time buckets per numeric kind "
+        "(mean per bucket) plus latest row per kind.",
+    ),
+):
+    if max_points is not None:
+        points, latest, anchor = await vitals_mod.patient_vitals_binned(
+            patient_id=pid,
+            hours=hours,
+            buckets=max_points,
+        )
+        return {
+            "points": points,
+            "latest": latest,
+            "window_hours": hours,
+            "buckets": max_points,
+            **anchor,
+        }
+
+    bounds = await vitals_mod.patient_vitals_window_bounds(
+        patient_id=pid, hours=hours,
+    )
+    if bounds is None:
+        return []
+    cutoff, t_max = bounds
     cur = (
         get_db()
-        .vitals.find({"patient_id": pid, "t": {"$gte": cutoff}})
+        .vitals.find(
+            {"patient_id": pid, "t": {"$gte": cutoff, "$lte": t_max}},
+        )
         .sort("t", 1)
     )
-    return [
-        {
-            "t": d["t"].isoformat() if hasattr(d["t"], "isoformat") else d["t"],
-            "kind": d["kind"],
-            "value": d["value"],
-            "unit": d["unit"],
-            "source": d["source"],
-            "clock_skew": d.get("clock_skew", False),
-        }
-        async for d in cur
-    ]
+    return [vitals_mod._vital_public_row(d) async for d in cur]
 
 
 @router.get("/stream")

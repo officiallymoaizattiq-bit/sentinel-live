@@ -22,6 +22,7 @@ export function SeverityChip({
 }) {
   const meta = severityMeta(severity);
   const isCrit = severity === "suggest_911";
+  const isCheck = severity === "patient_check";
   return (
     <span
       className={
@@ -32,8 +33,13 @@ export function SeverityChip({
       }
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${meta.dotClass}`}
-        style={{ boxShadow: `0 0 8px ${meta.glow}` }}
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dotClass}`}
+        style={{
+          // Same-hue glow as the chip makes the dot disappear; use a lighter halo.
+          boxShadow: isCheck
+            ? "0 0 6px rgba(147,197,253,0.85), 0 0 0 1px rgba(255,255,255,0.15)"
+            : `0 0 8px ${meta.glow}`,
+        }}
       />
       <span>{label ?? meta.label}</span>
     </span>

@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Glass } from "@/components/ui/Glass";
-import { api, type Alert, type Patient } from "@/lib/api";
+import { api, type Patient } from "@/lib/api";
 import {
   filterPatientsByParams,
   hasActivePatientFilters,
@@ -11,7 +11,6 @@ import {
   type CallSummaryLite,
 } from "@/lib/patientQuery";
 import { usePolling } from "@/lib/hooks/usePolling";
-import { useEventStream } from "@/lib/hooks/useEventStream";
 import { latestScoredCall } from "@/lib/latestScoredCall";
 
 type Tile = {
@@ -79,14 +78,10 @@ function toLiteSummaries(
 
 export function KpiStrip({
   initialPatients,
-  initialAlerts,
   initialSummaries,
-  initialOpenAlertCount,
 }: {
   initialPatients: Patient[];
-  initialAlerts?: Alert[];
   initialSummaries?: Record<string, { lastDeterioration: number | null }>;
-  initialOpenAlertCount?: number;
 }) {
   const sp = useSearchParams();
   const filterParams = useMemo(
@@ -99,50 +94,12 @@ export function KpiStrip({
     10_000,
     initialPatients
   );
-  const { data: alerts } = usePolling<Alert[]>(
-    api.alerts,
-    5_000,
-    initialAlerts ?? []
-  );
 
   const ps = patients ?? initialPatients ?? [];
-  const pollAlerts = alerts ?? initialAlerts ?? [];
 
   const [liteSummaries, setLiteSummaries] = useState<Record<string, CallSummaryLite>>(
     () => toLiteSummaries(initialSummaries)
   );
-
-  // Live-extend poll-derived alerts with any SSE-pushed alerts in between polls.
-  const [liveAlerts, setLiveAlerts] = useState<Alert[]>([]);
-  const [openCount, setOpenCount] = useState<number>(initialOpenAlertCount ?? 0);
-  useEventStream((e) => {
-    if (e.type === "alert") {
-      setLiveAlerts((prev) => {
-        if (prev.some((a) => a.call_id === e.call_id && a.severity === e.severity)) {
-          return prev;
-        }
-        const next: Alert = {
-          id: `${e.call_id}-${e.severity}-${e.at}`,
-          patient_id: e.patient_id,
-          call_id: e.call_id,
-          severity: e.severity,
-          channel: [],
-          sent_at: e.at,
-        };
-        return [next, ...prev].slice(0, 50);
-      });
-    }
-    if (e.type === "alert_opened") setOpenCount((n) => n + 1);
-    else if (e.type === "alert_ack") setOpenCount((n) => Math.max(0, n - 1));
-  });
-  // Merge, deduping on call_id+severity so polling eventually reconciles live-only.
-  const as: Alert[] = (() => {
-    const seen = new Set(pollAlerts.map((a) => `${a.call_id}|${a.severity}`));
-    const extras = liveAlerts.filter(
-      (a) => !seen.has(`${a.call_id}|${a.severity}`)
-    );
-    return [...extras, ...pollAlerts];
-  })();
 
   useEffect(() => {
     let alive = true;
@@ -197,15 +154,6 @@ export function KpiStrip({
     0
   );
 
-  const cohortAlerts = useMemo(() => {
-    if (!hasActivePatientFilters(filterParams)) return as;
-    const ids = new Set(filteredPs.map((p) => p.id));
-    return as.filter((a) => ids.has(a.patient_id));
-  }, [as, filteredPs, filterParams]);
-
-  const open = cohortAlerts.length;
-  const crit = cohortAlerts.filter((a) => a.severity === "suggest_911").length;
-
   const tiles: Tile[] = [
     {
       label: "Active patients",
@@ -240,25 +188,6 @@ export function KpiStrip({
       ),
     },
     {
-      label: "Open alerts",
-      value: openCount.toString().padStart(2, "0"),
-      hint: crit ? `${crit} critical` : "None critical",
-      accent:
-        crit > 0
-          ? "rgba(244,63,94,0.6)"
-          : open > 0
-          ? "rgba(251,146,60,0.55)"
-          : "rgba(52,211,153,0.5)",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
-          <path
-            d="M12 22a2 2 0 002-2h-4a2 2 0 002 2zm6-6V11a6 6 0 10-12 0v5l-2 2v1h16v-1l-2-2z"
-            fill="currentColor"
-          />
-        </svg>
-      ),
-    },
-    {
       label: "Avg deterioration",
       value: avg != null ? avg.toFixed(2) : "—",
       hint:
@@ -271,8 +200,8 @@ export function KpiStrip({
         avg != null && avg >= 0.6
           ? "rgba(244,63,94,0.55)"
           : avg != null && avg >= 0.3
-          ? "rgba(251,191,36,0.55)"
-          : "rgba(34,211,238,0.55)",
+            ? "rgba(251,191,36,0.55)"
+            : "rgba(34,211,238,0.55)",
       icon: (
         <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
           <path
@@ -288,7 +217,7 @@ export function KpiStrip({
   ];
 
   return (
-    <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+    <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
       {tiles.map((t) => (
         <Tile key={t.label} tile={t} />
       ))}

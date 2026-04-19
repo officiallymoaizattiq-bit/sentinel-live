@@ -2,7 +2,6 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { Glass } from "@/components/ui/Glass";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
-import { CohortPanel } from "@/components/CohortPanel";
 import { PatientHero } from "@/components/patient/PatientHero";
 import { VitalsRow } from "@/components/patient/VitalsRow";
 import { CallTimeline } from "@/components/patient/CallTimeline";
@@ -141,16 +140,11 @@ export default async function PatientDetail({
         <VitalsPanel patientId={params.id} />
       </section>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="min-w-0 space-y-4 lg:col-span-3">
-          {lastFinalized && (
-            <CallLogCard call={lastFinalized} audience="nurse" />
-          )}
-          <CallTimeline calls={calls} />
-        </div>
-        <div id="cohort" className="scroll-mt-24 min-w-0 lg:col-span-2">
-          <CohortPanel last={lastCall} />
-        </div>
+      <div className="min-w-0 space-y-4">
+        {lastFinalized && (
+          <CallLogCard call={lastFinalized} audience="nurse" />
+        )}
+        <CallTimeline calls={calls} />
       </div>
     </div>
   );

@@ -131,3 +131,96 @@ async def test_batch_schema_invalid_kind(db):
         )
     assert e.value.status_code == 400
     assert e.value.detail["error"] == "schema_invalid"
+
+
+async def test_patient_vitals_binned_caps_buckets_per_kind(db):
+    now = datetime.now(tz=timezone.utc)
+    docs = []
+    for i in range(60):
+        docs.append({
+            "patient_id": "p1",
+            "device_id": "d1",
+            "t": now - timedelta(minutes=59 - i),
+            "kind": "heart_rate",
+            "value": 70 + (i % 5),
+            "unit": "bpm",
+            "source": "apple_healthkit",
+            "clock_skew": False,
+        })
+    await db.vitals.insert_many(docs)
+    points, latest, anchor = await vitals.patient_vitals_binned(
+        patient_id="p1",
+        hours=1,
+        buckets=12,
+    )
+    hr = [p for p in points if p["kind"] == "heart_rate"]
+    assert len(hr) <= 12
+    assert "heart_rate" in latest
+    assert latest["heart_rate"]["kind"] == "heart_rate"
+    assert "anchored_until" in anchor and "anchored_from" in anchor
+
+
+async def test_patient_vitals_record_anchor_not_wall_clock(db):
+    """Old data (days ago) still appears: window ends at latest stored sample."""
+    t_max = datetime(2026, 4, 10, 15, 30, tzinfo=timezone.utc)
+    await db.vitals.insert_many([
+        {
+            "patient_id": "p2",
+            "device_id": "d1",
+            "t": t_max - timedelta(minutes=45),
+            "kind": "heart_rate",
+            "value": 70.0,
+            "unit": "bpm",
+            "source": "apple_healthkit",
+            "clock_skew": False,
+        },
+        {
+            "patient_id": "p2",
+            "device_id": "d1",
+            "t": t_max - timedelta(minutes=5),
+            "kind": "heart_rate",
+            "value": 80.0,
+            "unit": "bpm",
+            "source": "apple_healthkit",
+            "clock_skew": False,
+        },
+        {
+            "patient_id": "p2",
+            "device_id": "d1",
+            "t": t_max,
+            "kind": "heart_rate",
+            "value": 79.0,
+            "unit": "bpm",
+            "source": "apple_healthkit",
+            "clock_skew": False,
+        },
+    ])
+    points, latest, anchor = await vitals.patient_vitals_binned(
+        patient_id="p2", hours=1, buckets=12,
+    )
+    assert anchor["anchored_until"] == t_max.isoformat()
+    assert len([p for p in points if p["kind"] == "heart_rate"]) >= 1
+    assert latest["heart_rate"]["value"] == 79.0
+
+
+async def test_patient_vitals_many_samples_one_bucket_one_point(db):
+    """Dense HR in one 5-minute slice still yields one mean per bucket."""
+    t_max = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
+    docs = []
+    for i in range(50):
+        docs.append({
+            "patient_id": "p3",
+            "device_id": "d1",
+            "t": t_max - timedelta(seconds=50 - i),
+            "kind": "heart_rate",
+            "value": 100.0 + i,
+            "unit": "bpm",
+            "source": "apple_healthkit",
+            "clock_skew": False,
+        })
+    await db.vitals.insert_many(docs)
+    points, _latest, _anchor = await vitals.patient_vitals_binned(
+        patient_id="p3", hours=1, buckets=12,
+    )
+    hr = [p for p in points if p["kind"] == "heart_rate"]
+    assert len(hr) == 1
