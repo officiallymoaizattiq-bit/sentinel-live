@@ -30,7 +30,12 @@ import * as Notifications from 'expo-notifications';
  *   channel instead of silently keeping the old config.
  */
 
-export const INCOMING_CALL_CHANNEL_ID = 'incoming-calls';
+// Bumped to v2 because Android channel settings are immutable after the OS
+// has provisioned them. The v1 channel was created without explicit
+// audio attributes (defaulted to USAGE_NOTIFICATION) and ended up being
+// silenced by the foreground heads-up rules + sticky flag combo. v2 is
+// configured for ringtone-style audio and is created fresh.
+export const INCOMING_CALL_CHANNEL_ID = 'incoming-calls-v2';
 export const INCOMING_CALL_CATEGORY_ID = 'sentinel.incoming-call';
 export const INCOMING_CALL_NOTIFICATION_ID = 'sentinel.incoming-call.active';
 
@@ -63,26 +68,24 @@ export async function configureIncomingCallNotifications(): Promise<void> {
   // Foreground display rules. Without this, expo-notifications swallows
   // local notifications fired while the app is in the foreground — which is
   // the most common case for our SSE-triggered "incoming call" since the
-  // user is staring at the dashboard.
+  // user is staring at the dashboard. We aggressively opt in to *every*
+  // display channel because incoming calls should be unmissable.
   Notifications.setNotificationHandler({
-    handleNotification: async (n) => {
-      // categoryIdentifier IS present on the runtime NotificationContent
-      // (documented at https://docs.expo.dev/versions/latest/sdk/notifications/#notificationcontent)
-      // but expo-notifications' .d.ts excludes it from the input-vs-content
-      // split. Cast through a narrow shape rather than `any` so future
-      // edits stay type-checked.
-      const content = n.request.content as { categoryIdentifier?: string };
-      const isIncoming = content.categoryIdentifier === INCOMING_CALL_CATEGORY_ID;
-      return {
-        shouldShowAlert: true,
-        shouldPlaySound: isIncoming,
-        shouldSetBadge: false,
-        // SDK 50+ split shouldShowAlert into banner/list. Provide both so
-        // older + newer SDKs both behave correctly.
-        shouldShowBanner: true,
-        shouldShowList: true,
-      };
-    },
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      // SDK 50+ split shouldShowAlert into banner/list. Provide both so
+      // older + newer SDKs both behave correctly.
+      shouldShowBanner: true,
+      shouldShowList: true,
+      // Per the SDK source (ExpoNotificationBuilder.kt line 281), the
+      // handler's priority override wins over content.priority. Without
+      // this we get importance=2 (LOW) on the posted record even though
+      // our channel is importance=5 (MAX) — and Android then silently
+      // drops the heads-up banner.
+      priority: Notifications.AndroidNotificationPriority.MAX,
+    }),
   });
 
   await Notifications.setNotificationCategoryAsync(INCOMING_CALL_CATEGORY_ID, [
@@ -99,6 +102,17 @@ export async function configureIncomingCallNotifications(): Promise<void> {
   ]);
 
   if (Platform.OS === 'android') {
+    // Best-effort cleanup of the v1 channel. If the user updated from a
+    // build that used the old (silent) channel, leaving it behind would
+    // confuse the Settings → Notifications page with two "Incoming
+    // check-in calls" entries. Failure here is fine (channel may not
+    // exist on a fresh install).
+    try {
+      await Notifications.deleteNotificationChannelAsync('incoming-calls');
+    } catch {
+      // ignore
+    }
+
     await Notifications.setNotificationChannelAsync(INCOMING_CALL_CHANNEL_ID, {
       name: 'Incoming check-in calls',
       description:
@@ -147,6 +161,37 @@ export async function showIncomingCallNotification(
   // one so we never end up with two ringers competing on the lock screen.
   await dismissIncomingCallNotification();
 
+  // Channel binding is done via the TRIGGER, not the content. expo-notifications'
+  // schedule API treats `channelId` as a property of NativeChannelAwareTriggerInput
+  // (see node_modules/expo-notifications/src/scheduleNotificationAsync.ts:134-145).
+  // Putting `channelId` under `content.android` does NOTHING — the OS routes
+  // the notification to `expo_notifications_fallback_notification_channel`
+  // (importance=4, no vibration), which is exactly the silent "didn't ring"
+  // behavior we were seeing. On iOS the trigger must be `null` (no channels).
+  const trigger =
+    Platform.OS === 'android'
+      ? ({ channelId: INCOMING_CALL_CHANNEL_ID } as Notifications.NotificationTriggerInput)
+      : null;
+
+  // Why every field below is required (learned the hard way reading
+  // ExpoNotificationBuilder.kt and watching `dumpsys notification`):
+  //
+  // - sound: true → sets shouldPlayDefaultSound on the native content. If
+  //   neither this nor `vibrate` is set, the builder calls
+  //   `setSilent(true)` which suppresses both sound AND vibration even
+  //   when the channel has them configured. That's what we observed —
+  //   notifications posting with `vibrate=null sound=null defaults=0`.
+  // - vibrate: [...] → sets vibrationPattern on the native content so
+  //   shouldVibrate() returns true.
+  // - priority: MAX → expo-notifications computes the NotificationCompat
+  //   priority by reading content.priority. With no notificationBehavior
+  //   reachable (which happens whenever the JS handler can't run — app
+  //   backgrounded, screen off, JS thread paused), the native code falls
+  //   back to content.priority. Without this, the posted notification
+  //   gets importance=2 (LOW) and never shows as a heads-up banner.
+  // - NO sticky: true → Android maps it to FLAG_ONGOING_EVENT, which
+  //   exempts notifications from making sound or vibrating regardless of
+  //   channel.
   await Notifications.scheduleNotificationAsync({
     identifier: INCOMING_CALL_NOTIFICATION_ID,
     content: {
@@ -157,16 +202,11 @@ export async function showIncomingCallNotification(
           : 'A check-in is ready when you are.',
       data: { ...payload, kind: 'incoming-call' },
       categoryIdentifier: INCOMING_CALL_CATEGORY_ID,
-      sound: 'default',
-      sticky: true,
+      sound: true,
+      vibrate: [0, 1000, 500, 1000, 500, 1000],
       priority: Notifications.AndroidNotificationPriority.MAX,
-      // Channel binding is android-only; expo-notifications ignores the
-      // field on iOS, so it's safe to set unconditionally.
-      ...(Platform.OS === 'android'
-        ? { android: { channelId: INCOMING_CALL_CHANNEL_ID } }
-        : {}),
     },
-    trigger: null, // immediate
+    trigger,
   });
 }
 

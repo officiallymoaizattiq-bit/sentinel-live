@@ -62,11 +62,20 @@ export function useLiveVitals({
     if (!enabled) return;
     let cancelled = false;
     const adapter = getHealthAdapter();
+    // First poll uses a much wider window so the live tile shows *something*
+    // even when the wearable hasn't written in the last minute (Samsung
+    // Health, in particular, batches HR writes to Health Connect every
+    // ~10-15 min when the user isn't actively in a workout). Subsequent
+    // polls advance with the cursor so we only pick up new samples for the
+    // call-window buffer.
+    let firstPoll = true;
 
     const poll = async () => {
       const now = new Date();
+      const initialLookbackMs = Math.max(lookbackMs, 30 * 60 * 1000);
       const startIso =
-        cursorRef.current ?? new Date(now.getTime() - lookbackMs).toISOString();
+        cursorRef.current ??
+        new Date(now.getTime() - (firstPoll ? initialLookbackMs : lookbackMs)).toISOString();
       const endIso = now.toISOString();
 
       let samples: Sample[] = [];
@@ -103,6 +112,7 @@ export function useLiveVitals({
 
       if (maxT) cursorRef.current = maxT;
       if (!ready) setReady(true);
+      firstPoll = false;
     };
 
     poll();
