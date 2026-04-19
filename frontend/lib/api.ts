@@ -8,6 +8,7 @@ export type Patient = {
 
 export type CallRecord = {
   id: string;
+  patient_id?: string;
   called_at: string;
   score: {
     deterioration: number;
@@ -22,9 +23,6 @@ export type CallRecord = {
   similar_calls: { case_id: string; similarity: number; outcome: string }[];
   short_call: boolean;
   llm_degraded: boolean;
-};
-
-export type Call = CallRecord & {
   conversation_id?: string | null;
   ended_at?: string | null;
   end_reason?: "agent_signal" | "timeout_40s" | "manual" | null;
@@ -35,6 +33,8 @@ export type Call = CallRecord & {
   outcome_label?: "fine" | "schedule_visit" | "escalated_911" | null;
   escalation_911?: boolean;
 };
+
+export type Call = CallRecord;
 
 export type Alert = {
   id: string;
