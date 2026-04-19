@@ -131,7 +131,7 @@ export default async function PatientDetail({
         <div className="min-w-0 lg:col-span-3">
           <CallTimeline calls={calls} />
         </div>
-        <div className="min-w-0 lg:col-span-2">
+        <div id="cohort" className="scroll-mt-24 min-w-0 lg:col-span-2">
           <CohortPanel last={last} />
         </div>
       </div>

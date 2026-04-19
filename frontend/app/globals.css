@@ -22,9 +22,14 @@ body {
   height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   @apply text-slate-100 antialiased;
-  background: linear-gradient(180deg, #03050b 0%, #05070d 50%, #070a14 100%);
+  /* Blue-only canvas (no purple) */
+  background: linear-gradient(180deg, #070f1f 0%, #0b1e3d 45%, #0c2748 100%);
   background-attachment: fixed;
   font-feature-settings: "cv11", "ss01", "ss03";
   min-height: 100vh;
@@ -58,8 +63,8 @@ body {
   .glass-accent {
     background: linear-gradient(
       135deg,
-      rgba(59, 130, 246, 0.12) 0%,
-      rgba(99, 102, 241, 0.08) 100%
+      rgba(59, 130, 246, 0.14) 0%,
+      rgba(37, 99, 235, 0.1) 100%
     );
     backdrop-filter: blur(16px) saturate(170%);
     -webkit-backdrop-filter: blur(16px) saturate(170%);
