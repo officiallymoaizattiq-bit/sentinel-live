@@ -4,8 +4,6 @@
 
 Built for the **Hook Em Hack** hackathon. Patient-centered, not provider-centered.
 
-**Judges’ write-up** (inspiration, math sketch, challenges, learnings, roadmap): [`devpost.md`](./devpost.md).
-
 ---
 
 ## Why
