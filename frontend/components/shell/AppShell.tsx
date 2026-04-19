@@ -179,25 +179,6 @@ function Topbar({ title, subtitle }: { title?: string; subtitle?: string }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2.5">
-        <div className="hidden items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 lg:flex">
-          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 text-slate-500">
-            <path
-              d="M21 21l-4.3-4.3M11 18a7 7 0 110-14 7 7 0 010 14z"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search patients, alerts..."
-            className="w-48 bg-transparent text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none"
-          />
-          <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
-            ⌘K
-          </kbd>
-        </div>
-
         <div className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1.5">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
           <span className="text-xs font-medium text-slate-200">Demo</span>

@@ -1,6 +1,9 @@
+import { Suspense } from "react";
 import { api } from "@/lib/api";
+import { latestScoredCall } from "@/lib/latestScoredCall";
 import { AlertFeed } from "@/components/AlertFeed";
 import { KpiStrip } from "@/components/dashboard/KpiStrip";
+import { PatientFilters } from "@/components/dashboard/PatientFilters";
 import { PatientGrid } from "@/components/dashboard/PatientGrid";
 
 export const revalidate = 0;
@@ -8,14 +11,12 @@ export const revalidate = 0;
 type CallSummary = {
   series: number[];
   lastDeterioration: number | null;
-  lastAction: string | null;
   lastCalledAt: string | null;
 };
 
 const EMPTY: CallSummary = {
   series: [],
   lastDeterioration: null,
-  lastAction: null,
   lastCalledAt: null,
 };
 
@@ -33,12 +34,12 @@ export default async function Dashboard() {
           .filter((c) => c.score)
           .map((c) => c.score!.deterioration);
         const last = calls[calls.length - 1];
+        const lastScored = latestScoredCall(calls);
         return [
           p.id,
           {
             series,
-            lastDeterioration: last?.score?.deterioration ?? null,
-            lastAction: last?.score?.recommended_action ?? null,
+            lastDeterioration: lastScored?.score?.deterioration ?? null,
             lastCalledAt: last?.called_at ?? null,
           },
         ] as const;
@@ -49,41 +50,39 @@ export default async function Dashboard() {
   );
   const summaries: Record<string, CallSummary> = Object.fromEntries(summaryEntries);
 
-  const lastDets = Object.values(summaries)
-    .map((s) => s.lastDeterioration)
-    .filter((v): v is number => typeof v === "number");
-  const avgDeterioration =
-    lastDets.length > 0
-      ? lastDets.reduce((a, b) => a + b, 0) / lastDets.length
-      : null;
-
   return (
     <div className="space-y-6">
-      <KpiStrip
-        initialPatients={patients}
-        initialAlerts={alerts}
-        initialAvgDeterioration={avgDeterioration}
-      />
+      <Suspense
+        fallback={
+          <div className="mb-6 h-[120px] animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
+        }
+      >
+        <KpiStrip
+          initialPatients={patients}
+          initialAlerts={alerts}
+          initialSummaries={summaries}
+        />
+      </Suspense>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <section className="min-w-0 lg:col-span-2">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight text-white text-on-glass">
-                Monitored patients
-              </h2>
-              <p className="text-[11px] text-slate-400">
-                Status reflects the most recent scored call
-              </p>
-            </div>
-            <span className="text-[11px] text-slate-500">
-              {patients.length} total
-            </span>
-          </div>
-          <PatientGrid
-            initialPatients={patients}
-            initialSummaries={summaries}
-          />
+        <section className="min-w-0 space-y-4 lg:col-span-2">
+          <Suspense
+            fallback={
+              <div className="h-40 animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
+            }
+          >
+            <PatientFilters />
+          </Suspense>
+          <Suspense
+            fallback={
+              <div className="h-64 animate-pulse rounded-2xl bg-white/[0.04] ring-1 ring-white/10" />
+            }
+          >
+            <PatientGrid
+              initialPatients={patients}
+              initialSummaries={summaries}
+            />
+          </Suspense>
         </section>
 
         <aside className="min-w-0">

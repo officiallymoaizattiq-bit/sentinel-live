@@ -7,10 +7,12 @@ import { PatientHero } from "@/components/patient/PatientHero";
 import { VitalsRow } from "@/components/patient/VitalsRow";
 import { CallTimeline } from "@/components/patient/CallTimeline";
 import {
-  actionToSeverity,
+  formatTrajectoryAxisLabel,
   scoreToSeverity,
   type Severity,
+  severityMeta,
 } from "@/lib/format";
+import { latestScoredCall } from "@/lib/latestScoredCall";
 import { VitalsPanel } from "@/components/VitalsPanel";
 
 export const revalidate = 0;
@@ -46,7 +48,7 @@ export default async function PatientDetail({
           This patient may have been removed.
         </div>
         <Link
-          href="/"
+          href="/admin"
           className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-white/20"
         >
           ← Back to dashboard
@@ -58,19 +60,16 @@ export default async function PatientDetail({
   const points = calls
     .filter((c) => c.score !== null)
     .map((c) => ({
-      t: new Date(c.called_at).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      t: formatTrajectoryAxisLabel(c.called_at),
+      at: c.called_at,
       deterioration: c.score!.deterioration,
     }));
 
-  const last = calls[calls.length - 1] ?? null;
-  const severity: Severity = last?.score
-    ? actionToSeverity(last.score.recommended_action) !== "none"
-      ? actionToSeverity(last.score.recommended_action)
-      : scoreToSeverity(last.score.deterioration)
-    : "none";
+  const lastCall = calls[calls.length - 1] ?? null;
+  const lastScored = latestScoredCall(calls);
+  const severity: Severity = scoreToSeverity(
+    lastScored?.score?.deterioration ?? null
+  );
 
   const callsToday = calls.filter((c) => isToday(c.called_at)).length;
 
@@ -79,19 +78,19 @@ export default async function PatientDetail({
       <PatientHero
         patient={patient}
         severity={severity}
-        deterioration={last?.score?.deterioration ?? null}
+        deterioration={lastScored?.score?.deterioration ?? null}
         callsToday={callsToday}
         totalCalls={calls.length}
       />
 
       <VitalsRow
-        deterioration={last?.score?.deterioration ?? null}
-        qsofa={last?.score?.qsofa ?? null}
-        news2={last?.score?.news2 ?? null}
-        redFlags={last?.score?.red_flags ?? []}
+        deterioration={lastScored?.score?.deterioration ?? null}
+        qsofa={lastScored?.score?.qsofa ?? null}
+        news2={lastScored?.score?.news2 ?? null}
+        redFlags={lastScored?.score?.red_flags ?? []}
         severity={severity}
-        summary={last?.score?.summary ?? null}
-        recommendedAction={last?.score?.recommended_action ?? null}
+        summary={lastScored?.score?.summary ?? null}
+        recommendedAction={lastScored?.score?.recommended_action ?? null}
       />
 
       <Glass className="overflow-hidden p-5">
@@ -101,29 +100,36 @@ export default async function PatientDetail({
               Deterioration trajectory
             </div>
             <div className="text-[11px] text-slate-400">
-              Recent scored calls · severity bands shown
+              Bands at 0.2 / 0.4 / 0.6 / 0.8 — same scale as the deterioration score
             </div>
           </div>
-          <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-400/60" />
-              Calm
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-amber-400/60" />
-              Watch
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-rose-500/70" />
-              Critical
-            </span>
+          <div className="flex max-w-[min(100%,520px)] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[10px] uppercase tracking-wider text-slate-500">
+            {(
+              [
+                "none",
+                "patient_check",
+                "caregiver_alert",
+                "nurse_alert",
+                "suggest_911",
+              ] as const
+            ).map((s) => {
+              const m = severityMeta(s);
+              return (
+                <span key={s} className="flex items-center gap-1.5">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: m.color }}
+                  />
+                  {m.shortLabel}
+                </span>
+              );
+            })}
           </div>
         </div>
         <TrajectoryChart points={points} />
       </Glass>
 
       <section>
-        <h3 className="mb-2 text-sm text-slate-400">Wearable vitals (24h)</h3>
         <VitalsPanel patientId={params.id} />
       </section>
 
@@ -132,7 +138,7 @@ export default async function PatientDetail({
           <CallTimeline calls={calls} />
         </div>
         <div id="cohort" className="scroll-mt-24 min-w-0 lg:col-span-2">
-          <CohortPanel last={last} />
+          <CohortPanel last={lastCall} />
         </div>
       </div>
     </div>

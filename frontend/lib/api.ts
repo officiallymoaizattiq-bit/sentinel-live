@@ -4,6 +4,8 @@ export type Patient = {
   surgery_type: string;
   next_call_at: string | null;
   call_count: number;
+  /** ISO datetime from backend; optional for older cached responses */
+  discharge_date?: string | null;
 };
 
 export type CallRecord = {

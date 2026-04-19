@@ -94,7 +94,7 @@ export function PatientHero({
 
       <div className="mb-3 flex items-center gap-2 text-xs">
         <Link
-          href="/"
+          href="/admin"
           className="flex items-center gap-1 text-slate-400 hover:text-slate-200"
         >
           <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5">

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import type { Patient } from "@/lib/api";
 import { Glass } from "@/components/ui/Glass";
@@ -5,7 +6,6 @@ import { StatusDot } from "@/components/ui/StatusDot";
 import { SeverityChip } from "@/components/ui/SeverityChip";
 import { Sparkline } from "@/components/ui/Sparkline";
 import {
-  actionToSeverity,
   formatRelative,
   scoreToSeverity,
   severityMeta,
@@ -16,22 +16,21 @@ import {
 export type PatientCardProps = {
   p: Patient;
   series?: number[];
+  /** Latest scored call deterioration (same source as sparkline end). */
   lastDeterioration?: number | null;
-  lastAction?: string | null;
   lastCalledAt?: string | null;
+  /** Renders in the footer row (e.g. Call now). Must not overlap footer text. */
+  footerAction?: ReactNode;
 };
 
 export function PatientCard({
   p,
   series = [],
   lastDeterioration,
-  lastAction,
   lastCalledAt,
+  footerAction,
 }: PatientCardProps) {
-  const severity: Severity =
-    actionToSeverity(lastAction) !== "none"
-      ? actionToSeverity(lastAction)
-      : scoreToSeverity(lastDeterioration);
+  const severity: Severity = scoreToSeverity(lastDeterioration);
   const meta = severityMeta(severity);
   const detText =
     typeof lastDeterioration === "number"
@@ -40,7 +39,7 @@ export function PatientCard({
 
   return (
     <Link href={`/patients/${p.id}`} className="block focus:outline-none">
-      <Glass hover className="group relative overflow-hidden p-4">
+      <Glass backdrop={false} solidTone="lower" className="relative overflow-hidden p-4">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-px opacity-70"
@@ -79,22 +78,31 @@ export function PatientCard({
               {detText}
             </div>
           </div>
-          <div className="opacity-90">
+          <div className="shrink-0 overflow-hidden rounded-sm opacity-90">
             <Sparkline
               values={series}
               stroke={meta.color}
-              fill={meta.glow}
               width={108}
               height={32}
             />
           </div>
         </div>
 
-        <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500">
-          <span>
+        <div className="mt-3 flex items-end justify-between gap-3 text-[11px] text-slate-500">
+          <span className="shrink-0 pb-0.5">
             {p.call_count} {p.call_count === 1 ? "call" : "calls"}
           </span>
-          <span>{lastCalledAt ? formatRelative(lastCalledAt) : "no calls yet"}</span>
+          <div className="flex min-w-0 flex-1 items-end justify-end gap-2">
+            <span
+              className={
+                "min-w-0 truncate pb-0.5 text-right " +
+                (footerAction ? "max-w-[42%] sm:max-w-[50%] " : "")
+              }
+            >
+              {lastCalledAt ? formatRelative(lastCalledAt) : "no calls yet"}
+            </span>
+            {footerAction}
+          </div>
         </div>
       </Glass>
     </Link>

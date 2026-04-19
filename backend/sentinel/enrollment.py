@@ -16,12 +16,13 @@ async def enroll_patient(
     caregiver: Caregiver,
     consent: Consent | None,
     language: str = "en",
+    patient_id: str | None = None,
 ) -> str:
     if consent is None:
         raise ValueError("consent required to enroll patient")
     now = datetime.now(tz=timezone.utc)
     cadence_h = get_settings().call_cadence_hours
-    pid = str(uuid4())
+    pid = patient_id if patient_id is not None else str(uuid4())
     doc = {
         "_id": pid,
         "name": name,

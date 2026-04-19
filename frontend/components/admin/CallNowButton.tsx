@@ -30,7 +30,7 @@ export function CallNowButton({ patientId }: { patientId: string }) {
   };
 
   return (
-    <div className="inline-flex flex-col items-start gap-1">
+    <div className="inline-flex shrink-0 flex-col items-end gap-1">
       <button
         onClick={(e) => {
           e.preventDefault();
@@ -38,7 +38,7 @@ export function CallNowButton({ patientId }: { patientId: string }) {
           run();
         }}
         disabled={busy}
-        className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-50"
+        className="rounded-full border border-emerald-500/40 bg-slate-950 px-3 py-1 text-xs font-medium text-emerald-200 shadow-sm hover:border-emerald-400/55 hover:bg-slate-900 disabled:opacity-50"
       >
         {busy ? "Calling…" : "Call now"}
       </button>

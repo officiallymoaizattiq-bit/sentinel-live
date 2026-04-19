@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { CallRecord } from "@/lib/api";
 import { api } from "@/lib/api";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
+import { formatTrajectoryAxisLabel } from "@/lib/format";
 import { useEventStream } from "@/lib/hooks/useEventStream";
 
 const WIDGET_SRC = "https://elevenlabs.io/convai-widget/index.js";
@@ -52,7 +53,8 @@ export function PatientLiveView({
   const points = calls
     .filter((c) => c.score !== null)
     .map((c) => ({
-      t: new Date(c.called_at).toLocaleTimeString(),
+      t: formatTrajectoryAxisLabel(c.called_at),
+      at: c.called_at,
       deterioration: c.score!.deterioration,
     }));
   const last = calls[calls.length - 1] ?? null;

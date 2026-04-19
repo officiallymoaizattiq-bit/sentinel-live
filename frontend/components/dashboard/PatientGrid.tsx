@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { api, type CallRecord, type Patient } from "@/lib/api";
+import {
+  filterPatientsByParams,
+  hasActivePatientFilters,
+  parseFromURLSearchParams,
+} from "@/lib/patientQuery";
+import { latestScoredCall } from "@/lib/latestScoredCall";
 import { usePolling } from "@/lib/hooks/usePolling";
 import { useEventStream } from "@/lib/hooks/useEventStream";
 import { PatientCard } from "@/components/PatientCard";
@@ -11,14 +19,12 @@ import { Glass } from "@/components/ui/Glass";
 type CallSummary = {
   series: number[];
   lastDeterioration: number | null;
-  lastAction: string | null;
   lastCalledAt: string | null;
 };
 
 const EMPTY: CallSummary = {
   series: [],
   lastDeterioration: null,
-  lastAction: null,
   lastCalledAt: null,
 };
 
@@ -28,10 +34,10 @@ function summarize(calls: CallRecord[]): CallSummary {
     .filter((c) => c.score)
     .map((c) => c.score!.deterioration);
   const last = calls[calls.length - 1];
+  const lastScored = latestScoredCall(calls);
   return {
     series,
-    lastDeterioration: last.score?.deterioration ?? null,
-    lastAction: last.score?.recommended_action ?? null,
+    lastDeterioration: lastScored?.score?.deterioration ?? null,
     lastCalledAt: last.called_at ?? null,
   };
 }
@@ -43,6 +49,12 @@ export function PatientGrid({
   initialPatients: Patient[];
   initialSummaries: Record<string, CallSummary>;
 }) {
+  const sp = useSearchParams();
+  const filterParams = useMemo(
+    () => parseFromURLSearchParams(new URLSearchParams(sp.toString())),
+    [sp]
+  );
+
   const { data: patientsData } = usePolling<Patient[]>(
     api.patients,
     10_000,
@@ -52,6 +64,11 @@ export function PatientGrid({
 
   const [summaries, setSummaries] =
     useState<Record<string, CallSummary>>(initialSummaries);
+
+  const filteredPatients = useMemo(
+    () => filterPatientsByParams(patients, summaries, filterParams),
+    [patients, summaries, filterParams]
+  );
 
   // Live refresh: when a call is scored for a patient, refetch that patient's calls.
   useEventStream((e) => {
@@ -97,7 +114,11 @@ export function PatientGrid({
 
   if (!patients.length) {
     return (
-      <Glass className="flex flex-col items-center justify-center gap-2 p-12 text-center">
+      <Glass
+        backdrop={false}
+        solidTone="lower"
+        className="flex flex-col items-center justify-center gap-2 p-12 text-center"
+      >
         <div className="grid h-12 w-12 place-items-center rounded-full bg-accent-500/15 ring-1 ring-accent-400/30">
           <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6 text-accent-300">
             <path
@@ -120,25 +141,76 @@ export function PatientGrid({
     );
   }
 
+  if (!filteredPatients.length && hasActivePatientFilters(filterParams)) {
+    return (
+      <>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight text-white text-on-glass">
+              Monitored patients
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              Status reflects the most recent scored call
+            </p>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            0 shown · {patients.length} enrolled
+          </span>
+        </div>
+        <Glass
+          backdrop={false}
+          solidTone="lower"
+          className="flex flex-col items-center justify-center gap-3 p-12 text-center"
+        >
+          <div className="text-sm font-medium text-slate-200">
+            No patients match your filters
+          </div>
+          <p className="max-w-sm text-xs text-slate-500">
+            Try widening the search or clearing advanced filters.
+          </p>
+          <Link
+            href="/admin"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-white/20"
+          >
+            Clear all filters
+          </Link>
+        </Glass>
+      </>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-2">
-      {patients.map((p) => {
-        const s = summaries[p.id] ?? EMPTY;
-        return (
-          <div key={p.id} className="relative">
+    <>
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-white text-on-glass">
+            Monitored patients
+          </h2>
+          <p className="text-[11px] text-slate-400">
+            Status reflects the most recent scored call
+          </p>
+        </div>
+        <span className="text-[11px] text-slate-500">
+          {hasActivePatientFilters(filterParams)
+            ? `${filteredPatients.length} shown · ${patients.length} enrolled`
+            : `${patients.length} total`}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-2">
+        {filteredPatients.map((p) => {
+          const s = summaries[p.id] ?? EMPTY;
+          return (
             <PatientCard
+              key={p.id}
               p={p}
               series={s.series}
               lastDeterioration={s.lastDeterioration}
-              lastAction={s.lastAction}
               lastCalledAt={s.lastCalledAt}
+              footerAction={<CallNowButton patientId={p.id} />}
             />
-            <div className="absolute right-3 bottom-3 z-10">
-              <CallNowButton patientId={p.id} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

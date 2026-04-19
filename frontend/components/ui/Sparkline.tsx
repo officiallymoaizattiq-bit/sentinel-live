@@ -3,14 +3,12 @@ export function Sparkline({
   width = 96,
   height = 28,
   stroke = "#60A5FA",
-  fill = "rgba(96,165,250,0.18)",
   className = "",
 }: {
   values: number[];
   width?: number;
   height?: number;
   stroke?: string;
-  fill?: string;
   className?: string;
 }) {
   if (!values.length) {
@@ -52,7 +50,6 @@ export function Sparkline({
     .join(" ");
   const areaPath = `${linePath} L${width.toFixed(2)},${height} L0,${height} Z`;
 
-  const gradId = `spark-${Math.random().toString(36).slice(2, 9)}`;
   const last = points[points.length - 1];
 
   return (
@@ -63,13 +60,8 @@ export function Sparkline({
       className={className}
       aria-hidden
     >
-      <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={fill} stopOpacity="1" />
-          <stop offset="100%" stopColor={fill} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
+      {/* Solid fill avoids vertical SVG gradients compositing badly with glass layers. */}
+      <path d={areaPath} fill={stroke} fillOpacity={0.14} />
       <path
         d={linePath}
         fill="none"
@@ -78,13 +70,7 @@ export function Sparkline({
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle
-        cx={last[0]}
-        cy={last[1]}
-        r={2.5}
-        fill={stroke}
-        style={{ filter: `drop-shadow(0 0 4px ${stroke})` }}
-      />
+      <circle cx={last[0]} cy={last[1]} r={2.5} fill={stroke} />
     </svg>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Alert } from "@/lib/api";
 import { useEventStream } from "@/lib/hooks/useEventStream";
+import { Glass } from "@/components/ui/Glass";
 
 type Props = { initial?: Alert[] };
 
@@ -45,38 +46,40 @@ export function AlertFeed({ initial = [] }: Props) {
   );
 
   return (
-    <section>
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-white text-on-glass">
-          Live alerts
-        </h2>
-        <span className="text-[10px] text-emerald-400">● live</span>
-      </div>
-      <ul className="space-y-2">
-        {items.map((a) => {
-          const red = a.severity === "suggest_911";
-          const yellow = a.severity === "nurse_alert";
-          const cls = red
-            ? "border-red-500/40 bg-red-950/40"
-            : yellow
-            ? "border-yellow-500/40 bg-yellow-950/30"
-            : "border-white/10 bg-white/5";
-          return (
-            <li key={a.id} className={"rounded-lg border p-3 text-xs " + cls}>
-              <div className="font-mono">{a.severity}</div>
-              <div className="text-slate-400">
-                {new Date(a.sent_at).toLocaleTimeString()}
-                {a.channel.length ? ` · ${a.channel.join(", ")}` : ""}
-              </div>
+    <Glass backdrop={false} className="p-4">
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white text-on-glass">
+            Live alerts
+          </h2>
+          <span className="text-[10px] text-emerald-400">● live</span>
+        </div>
+        <ul className="space-y-2">
+          {items.map((a) => {
+            const red = a.severity === "suggest_911";
+            const yellow = a.severity === "nurse_alert";
+            const cls = red
+              ? "border-red-500/45 bg-red-950/85"
+              : yellow
+                ? "border-yellow-500/45 bg-yellow-950/80"
+                : "border-white/10 bg-slate-950/70";
+            return (
+              <li key={a.id} className={"rounded-lg border p-3 text-xs " + cls}>
+                <div className="font-mono">{a.severity}</div>
+                <div className="text-slate-400">
+                  {new Date(a.sent_at).toLocaleTimeString()}
+                  {a.channel.length ? ` · ${a.channel.join(", ")}` : ""}
+                </div>
+              </li>
+            );
+          })}
+          {items.length === 0 && (
+            <li className="rounded-lg border border-white/10 bg-slate-950/70 p-3 text-xs text-slate-400">
+              No alerts yet.
             </li>
-          );
-        })}
-        {items.length === 0 && (
-          <li className="rounded-lg border border-white/10 bg-white/5 p-3 text-xs text-slate-400">
-            No alerts yet.
-          </li>
-        )}
-      </ul>
-    </section>
+          )}
+        </ul>
+      </section>
+    </Glass>
   );
 }

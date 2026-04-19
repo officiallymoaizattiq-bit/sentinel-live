@@ -77,13 +77,55 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
   }
 }
 
+/** Ordered high → low; must stay in sync with `deteriorationScoreBands`. */
+const DETERIORATION_RULES: { min: number; severity: Severity }[] = [
+  { min: 0.8, severity: "suggest_911" },
+  { min: 0.6, severity: "nurse_alert" },
+  { min: 0.4, severity: "caregiver_alert" },
+  { min: 0.2, severity: "patient_check" },
+];
+
 export function scoreToSeverity(deterioration: number | null | undefined): Severity {
   if (deterioration == null) return "none";
-  if (deterioration >= 0.8) return "suggest_911";
-  if (deterioration >= 0.6) return "nurse_alert";
-  if (deterioration >= 0.4) return "caregiver_alert";
-  if (deterioration >= 0.2) return "patient_check";
+  for (const { min, severity } of DETERIORATION_RULES) {
+    if (deterioration >= min) return severity;
+  }
   return "none";
+}
+
+/** Y-intervals for trajectory chart — same cut points as `scoreToSeverity`. */
+export function deteriorationScoreBands(): {
+  y0: number;
+  y1: number;
+  severity: Severity;
+}[] {
+  const edges = [0, 0.2, 0.4, 0.6, 0.8, 1] as const;
+  const severities: Severity[] = [
+    "none",
+    "patient_check",
+    "caregiver_alert",
+    "nurse_alert",
+    "suggest_911",
+  ];
+  return severities.map((severity, i) => ({
+    y0: edges[i],
+    y1: edges[i + 1],
+    severity,
+  }));
+}
+
+/** Axis tick text; includes seconds so nearby demo calls do not collapse to one label. */
+export function formatTrajectoryAxisLabel(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function actionToSeverity(action: string | null | undefined): Severity {

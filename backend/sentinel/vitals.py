@@ -17,8 +17,8 @@ RATE_BURST = 60
 RATE_PER_DAY = 500
 
 VALID_KINDS = {"heart_rate", "spo2", "resp_rate", "temp", "steps",
-               "sleep_stage", "hrv_sdnn", "hrv_rmssd"}
-VALID_UNITS = {"bpm", "pct", "cpm", "c", "count", "enum", "ms"}
+               "sleep_stage", "hrv_sdnn", "hrv_rmssd", "vo2"}
+VALID_UNITS = {"bpm", "pct", "cpm", "c", "count", "enum", "ms", "mL/kg/min"}
 VALID_SOURCES = {"apple_healthkit", "health_connect", "manual"}
 VALID_SLEEP = {"awake", "light", "deep", "rem", "in_bed"}
 
@@ -185,3 +185,56 @@ async def ingest_batch(
         "accepted": len(cleaned),
         "flagged_clock_skew": flagged,
     }
+
+
+DEMO_CLINICIAN_VITALS_PID = "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
+DEMO_CLINICIAN_VITALS_SOURCE = "demo_clinician_ui"
+
+
+async def ensure_demo_clinician_vitals(db=None) -> None:
+    """Insert demo wearable samples for the fixed John Chen UUID (clinician UI).
+
+    Idempotent: replaces only rows tagged with ``demo_clinician_ui`` for that
+    patient so restarts do not duplicate points.
+
+    ``db`` may be injected (e.g. mongomock in tests); defaults to ``get_db()``.
+    """
+    conn = db if db is not None else get_db()
+    await conn.vitals.delete_many({
+        "patient_id": DEMO_CLINICIAN_VITALS_PID,
+        "source": DEMO_CLINICIAN_VITALS_SOURCE,
+    })
+    now = datetime.now(tz=timezone.utc)
+    times = [
+        now - timedelta(hours=20),
+        now - timedelta(hours=10),
+        now - timedelta(hours=1),
+    ]
+    heart_rates = [72, 88, 78]
+    vo2_vals = [31.5, 34.2, 32.8]
+    base = {
+        "patient_id": DEMO_CLINICIAN_VITALS_PID,
+        "device_id": "demo_clinician_device",
+        "source": DEMO_CLINICIAN_VITALS_SOURCE,
+        "confidence": None,
+        "clock_skew": False,
+    }
+    docs: list[dict] = []
+    for i, t in enumerate(times):
+        docs.append({
+            **base,
+            "t": t,
+            "kind": "heart_rate",
+            "value": heart_rates[i],
+            "unit": "bpm",
+        })
+    for i, t in enumerate(times):
+        docs.append({
+            **base,
+            "t": t,
+            "kind": "vo2",
+            "value": vo2_vals[i],
+            "unit": "mL/kg/min",
+        })
+    if docs:
+        await conn.vitals.insert_many(docs)

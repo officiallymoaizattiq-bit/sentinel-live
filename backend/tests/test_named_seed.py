@@ -16,6 +16,7 @@ def db(monkeypatch):
 async def test_seed_creates_three_distinct_patients(db):
     pids = await named_seed.seed_named_patients(clean=True)
     assert len(pids) == 3
+    assert pids[0] == "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
     docs = [d async for d in db.patients.find({})]
     names = {d["name"] for d in docs}
     assert names == {"John Chen", "Maria Garcia", "David Patel"}

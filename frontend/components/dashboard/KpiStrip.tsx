@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Glass } from "@/components/ui/Glass";
 import { api, type Alert, type Patient } from "@/lib/api";
+import {
+  filterPatientsByParams,
+  hasActivePatientFilters,
+  parseFromURLSearchParams,
+  type CallSummaryLite,
+} from "@/lib/patientQuery";
 import { usePolling } from "@/lib/hooks/usePolling";
 import { useEventStream } from "@/lib/hooks/useEventStream";
+import { latestScoredCall } from "@/lib/latestScoredCall";
 
 type Tile = {
   label: string;
@@ -27,10 +35,10 @@ function isToday(iso: string | null | undefined): boolean {
 
 function Tile({ tile }: { tile: Tile }) {
   return (
-    <Glass className="group relative overflow-hidden p-4">
+    <Glass backdrop={false} className="relative overflow-hidden p-4">
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-30 blur-2xl transition-opacity group-hover:opacity-60"
+        className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-25 blur-2xl"
         style={{ background: tile.accent }}
       />
       <div className="flex items-start justify-between">
@@ -57,15 +65,33 @@ function Tile({ tile }: { tile: Tile }) {
   );
 }
 
+function toLiteSummaries(
+  initial: Record<string, { lastDeterioration: number | null }> | undefined
+): Record<string, CallSummaryLite> {
+  if (!initial) return {};
+  return Object.fromEntries(
+    Object.entries(initial).map(([k, v]) => [
+      k,
+      { lastDeterioration: v.lastDeterioration },
+    ])
+  );
+}
+
 export function KpiStrip({
   initialPatients,
   initialAlerts,
-  initialAvgDeterioration,
+  initialSummaries,
 }: {
   initialPatients: Patient[];
   initialAlerts?: Alert[];
-  initialAvgDeterioration?: number | null;
+  initialSummaries?: Record<string, { lastDeterioration: number | null }>;
 }) {
+  const sp = useSearchParams();
+  const filterParams = useMemo(
+    () => parseFromURLSearchParams(new URLSearchParams(sp.toString())),
+    [sp]
+  );
+
   const { data: patients } = usePolling<Patient[]>(
     api.patients,
     10_000,
@@ -79,6 +105,10 @@ export function KpiStrip({
 
   const ps = patients ?? initialPatients ?? [];
   const pollAlerts = alerts ?? initialAlerts ?? [];
+
+  const [liteSummaries, setLiteSummaries] = useState<Record<string, CallSummaryLite>>(
+    () => toLiteSummaries(initialSummaries)
+  );
 
   // Live-extend poll-derived alerts with any SSE-pushed alerts in between polls.
   const [liveAlerts, setLiveAlerts] = useState<Alert[]>([]);
@@ -109,26 +139,28 @@ export function KpiStrip({
     return [...extras, ...pollAlerts];
   })();
 
-  const [avg, setAvg] = useState<number | null>(initialAvgDeterioration ?? null);
-
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       try {
-        const lasts = await Promise.all(
+        const rows = await Promise.all(
           ps.map(async (p) => {
             try {
               const cs = await api.calls(p.id);
-              const last = cs[cs.length - 1];
-              return last?.score?.deterioration ?? null;
+              const lastScored = latestScoredCall(cs);
+              return [
+                p.id,
+                {
+                  lastDeterioration: lastScored?.score?.deterioration ?? null,
+                },
+              ] as const;
             } catch {
-              return null;
+              return [p.id, { lastDeterioration: null }] as const;
             }
           })
         );
-        const valid = lasts.filter((v): v is number => typeof v === "number");
         if (alive) {
-          setAvg(valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : null);
+          setLiteSummaries(Object.fromEntries(rows));
         }
       } catch {
         /* noop */
@@ -143,18 +175,41 @@ export function KpiStrip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ps.map((p) => p.id).join(",")]);
 
-  const callsToday = ps.reduce(
+  const filteredPs = useMemo(
+    () => filterPatientsByParams(ps, liteSummaries, filterParams),
+    [ps, liteSummaries, filterParams]
+  );
+
+  const avg = useMemo(() => {
+    const dets = filteredPs
+      .map((p) => liteSummaries[p.id]?.lastDeterioration)
+      .filter((v): v is number => typeof v === "number");
+    return dets.length ? dets.reduce((a, b) => a + b, 0) / dets.length : null;
+  }, [filteredPs, liteSummaries]);
+
+  const callsToday = filteredPs.reduce(
     (acc, p) => acc + (isToday(p.next_call_at) ? 1 : 0),
     0
   );
-  const open = as.length;
-  const crit = as.filter((a) => a.severity === "suggest_911").length;
+
+  const cohortAlerts = useMemo(() => {
+    if (!hasActivePatientFilters(filterParams)) return as;
+    const ids = new Set(filteredPs.map((p) => p.id));
+    return as.filter((a) => ids.has(a.patient_id));
+  }, [as, filteredPs, filterParams]);
+
+  const open = cohortAlerts.length;
+  const crit = cohortAlerts.filter((a) => a.severity === "suggest_911").length;
 
   const tiles: Tile[] = [
     {
       label: "Active patients",
-      value: ps.length.toString().padStart(2, "0"),
-      hint: ps.length === 1 ? "1 enrolled" : `${ps.length} enrolled`,
+      value: filteredPs.length.toString().padStart(2, "0"),
+      hint: hasActivePatientFilters(filterParams)
+        ? `${filteredPs.length} in view · ${ps.length} enrolled`
+        : ps.length === 1
+          ? "1 enrolled"
+          : `${ps.length} enrolled`,
       accent: "rgba(96,165,250,0.55)",
       icon: (
         <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
@@ -201,7 +256,12 @@ export function KpiStrip({
     {
       label: "Avg deterioration",
       value: avg != null ? avg.toFixed(2) : "—",
-      hint: avg != null ? "Across active patients" : "No scored calls yet",
+      hint:
+        avg != null
+          ? hasActivePatientFilters(filterParams)
+            ? "Across patients in view"
+            : "Across active patients"
+          : "No scored calls yet",
       accent:
         avg != null && avg >= 0.6
           ? "rgba(244,63,94,0.55)"

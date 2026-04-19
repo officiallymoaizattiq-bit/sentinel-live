@@ -53,16 +53,18 @@ async def enroll(body: EnrollRequest):
 @router.get("/patients")
 async def list_patients():
     docs = [d async for d in get_db().patients.find({})]
-    return [
-        {
+    out: list[dict[str, Any]] = []
+    for d in docs:
+        dd = d.get("discharge_date")
+        out.append({
             "id": d["_id"],
             "name": d["name"],
             "surgery_type": d["surgery_type"],
             "next_call_at": d.get("next_call_at"),
             "call_count": d.get("call_count", 0),
-        }
-        for d in docs
-    ]
+            "discharge_date": dd.isoformat() if dd else None,
+        })
+    return out
 
 
 @router.get("/patients/{pid}/calls")

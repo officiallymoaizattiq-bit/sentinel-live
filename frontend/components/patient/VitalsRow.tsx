@@ -1,5 +1,5 @@
 import { Glass } from "@/components/ui/Glass";
-import { type Severity, severityMeta } from "@/lib/format";
+import { type Severity, scoreToSeverity, severityMeta } from "@/lib/format";
 
 function Vital({
   label,
@@ -55,14 +55,18 @@ export function VitalsRow({
   recommendedAction?: string | null;
 }) {
   const meta = severityMeta(severity);
+  const detAccent =
+    deterioration != null
+      ? severityMeta(scoreToSeverity(deterioration)).color
+      : severityMeta("none").color;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Vital
           label="Deterioration"
           value={deterioration != null ? deterioration.toFixed(2) : "—"}
-          hint="0.00 — 1.00"
-          accent={meta.color}
+          hint="0.00 — 1.00 · bands match trajectory"
+          accent={detAccent}
         />
         <Vital
           label="qSOFA"

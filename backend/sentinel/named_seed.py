@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sentinel.db import get_db
 from sentinel.enrollment import enroll_patient
+from sentinel.vitals import ensure_demo_clinician_vitals
 from sentinel.models import Caregiver, Consent, SurgeryType
 
 DEMO_PATIENTS = [
@@ -42,10 +43,12 @@ async def seed_named_patients(*, clean: bool = True) -> list[str]:
         await db.calls.delete_many({})
         await db.alerts.delete_many({})
         await db.care_plans.delete_many({})
+        await db.vitals.delete_many({})
 
     now = datetime.now(tz=timezone.utc)
     pids: list[str] = []
-    for p in DEMO_PATIENTS:
+    john_pid = "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
+    for i, p in enumerate(DEMO_PATIENTS):
         surgery_date = now - timedelta(days=p["days_post_op"] + 2)
         discharge_date = now - timedelta(days=p["days_post_op"])
         pid = await enroll_patient(
@@ -56,6 +59,8 @@ async def seed_named_patients(*, clean: bool = True) -> list[str]:
             discharge_date=discharge_date,
             caregiver=Caregiver(name=p["caregiver_name"], phone=p["caregiver_phone"]),
             consent=Consent(recorded_at=now, ip="127.0.0.1", version="v1"),
+            patient_id=john_pid if i == 0 else None,
         )
         pids.append(pid)
+    await ensure_demo_clinician_vitals(db)
     return pids
