@@ -76,11 +76,21 @@ async def patient_calls(pid: str):
     return [
         {
             "id": d["_id"],
+            "patient_id": d.get("patient_id"),
             "called_at": d["called_at"],
             "score": d.get("score"),
             "similar_calls": d.get("similar_calls", []),
             "short_call": d.get("short_call", False),
             "llm_degraded": d.get("llm_degraded", False),
+            "summary_patient": d.get("summary_patient"),
+            "summary_nurse": d.get("summary_nurse"),
+            "summaries_generated_at": d.get("summaries_generated_at"),
+            "summaries_error": d.get("summaries_error"),
+            "outcome_label": d.get("outcome_label"),
+            "escalation_911": d.get("escalation_911", False),
+            "conversation_id": d.get("conversation_id"),
+            "ended_at": d.get("ended_at"),
+            "end_reason": d.get("end_reason"),
         }
         async for d in cur
     ]
@@ -157,6 +167,60 @@ async def regenerate_summary(call_id: str):
         }},
     )
     return {"summary_patient": p, "summary_nurse": n}
+
+
+class WidgetEndBody(BaseModel):
+    patient_id: str
+    transcript: str | None = None
+    severity: str | None = None  # optional override: none|patient_check|nurse_alert|suggest_911
+
+
+@router.post("/calls/widget-end")
+async def widget_end_call(body: WidgetEndBody):
+    from uuid import uuid4
+    from sentinel.finalize import finalize_call
+
+    db = get_db()
+    call_id = str(uuid4())
+    conv_id = f"widget-{call_id}"
+    action = body.severity or "none"
+    det_map = {"none": 0.12, "patient_check": 0.25, "caregiver_alert": 0.35,
+               "nurse_alert": 0.55, "suggest_911": 0.85}
+    det = det_map.get(action, 0.12)
+    news2 = 2 if det < 0.3 else 5 if det < 0.6 else 12
+    qsofa = 0 if det < 0.6 else 2
+    red_flags = ["sepsis"] if action == "suggest_911" else []
+    summary_text = "Simulated widget check-in transcript." if not body.transcript else body.transcript[:200]
+    transcript_text = body.transcript or "agent: How are you feeling today?\npatient: I feel okay, a little tired."
+    await db.calls.insert_one({
+        "_id": call_id,
+        "patient_id": body.patient_id,
+        "called_at": datetime.now(timezone.utc),
+        "conversation_id": conv_id,
+        "transcript": [
+            {"role": "patient", "text": transcript_text, "t_start": 0.0, "t_end": 20.0}
+        ],
+        "score": {
+            "deterioration": det,
+            "qsofa": qsofa,
+            "news2": news2,
+            "red_flags": red_flags,
+            "summary": summary_text,
+            "recommended_action": action,
+        },
+        "similar_calls": [],
+        "audio_features": {},
+        "baseline_drift": {},
+        "llm_degraded": False,
+        "audio_degraded": False,
+        "short_call": False,
+    })
+    result = await finalize_call(
+        conversation_id=conv_id,
+        transcript=transcript_text,
+        end_reason="manual",
+    )
+    return {"call_id": call_id, **result}
 
 
 @router.get("/calls/twiml")

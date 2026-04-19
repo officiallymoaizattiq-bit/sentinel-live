@@ -75,4 +75,10 @@ export const api = {
   regenerateSummary: (id: string) =>
     fetch(resolve(`/api/calls/${id}/summary/regenerate`), { method: "POST" })
       .then((r) => r.json() as Promise<{ summary_patient: string; summary_nurse: string }>),
+  widgetEndCall: (patient_id: string, severity?: string) =>
+    fetch(resolve("/api/calls/widget-end"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ patient_id, severity }),
+    }).then((r) => r.json() as Promise<{ call_id: string }>),
 };

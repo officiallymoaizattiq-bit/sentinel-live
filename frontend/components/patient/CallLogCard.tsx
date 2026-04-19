@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Call } from "@/lib/api";
 import { Glass } from "@/components/ui/Glass";
 
@@ -11,12 +11,17 @@ export function CallLogCard({
   call: Call;
   audience: "patient" | "nurse";
 }) {
-  const initial =
+  const propSummary =
     audience === "patient"
       ? call.summary_patient ?? null
       : call.summary_nurse ?? null;
-  const [summary, setSummary] = useState<string | null>(initial);
+  const [summary, setSummary] = useState<string | null>(propSummary);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setSummary(propSummary);
+  }, [propSummary, call.id]);
+
   const generating = !summary && !call.summaries_error;
 
   async function regenerate() {

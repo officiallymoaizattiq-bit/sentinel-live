@@ -67,6 +67,8 @@ export default async function PatientDetail({
     }));
 
   const last = calls[calls.length - 1] ?? null;
+  const lastFinalized =
+    [...calls].reverse().find((c) => c.summary_nurse || c.summary_patient || c.outcome_label) ?? last;
   const severity: Severity = last?.score
     ? actionToSeverity(last.score.recommended_action) !== "none"
       ? actionToSeverity(last.score.recommended_action)
@@ -130,7 +132,7 @@ export default async function PatientDetail({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-3 space-y-4">
-          {last && <CallLogCard call={last} audience="nurse" />}
+          {lastFinalized && <CallLogCard call={lastFinalized} audience="nurse" />}
           <CallTimeline calls={calls} />
         </div>
         <div id="cohort" className="scroll-mt-24 min-w-0 lg:col-span-2">

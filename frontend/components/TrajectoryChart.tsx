@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -90,6 +91,8 @@ function OutcomeMarkers({
 }
 
 export function TrajectoryChart({ points }: { points: Point[] }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   return (
     <div className="h-[260px] w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -181,7 +184,7 @@ export function TrajectoryChart({ points }: { points: Point[] }) {
             }}
             isAnimationActive
           />
-          <Customized component={OutcomeMarkers} />
+          {mounted && <Customized component={OutcomeMarkers} />}
         </AreaChart>
       </ResponsiveContainer>
     </div>
