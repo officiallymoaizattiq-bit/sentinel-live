@@ -56,11 +56,13 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         label: "Check",
         shortLabel: "Check",
         rank: 1,
-        color: "#38BDF8",
-        glow: "rgba(56,189,248,0.5)",
-        dotClass: "bg-sky-400",
-        chipClass: "bg-sky-500/15 text-sky-200 ring-1 ring-inset ring-sky-400/40",
-        ringClass: "ring-sky-400/60",
+        color: "#3B82F6",
+        glow: "rgba(59,130,246,0.55)",
+        // Lighter fill + ring reads like Stable’s emerald dot on a blue-tinted chip.
+        dotClass: "bg-blue-400 ring-1 ring-white/35",
+        chipClass:
+          "bg-blue-500/20 text-blue-300 ring-1 ring-inset ring-blue-400/50",
+        ringClass: "ring-blue-400/60",
       };
     case "none":
     default:

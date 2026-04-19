@@ -187,6 +187,141 @@ async def ingest_batch(
     }
 
 
+def _vital_public_row(d: dict) -> dict:
+    t = d["t"]
+    return {
+        "t": t.isoformat() if hasattr(t, "isoformat") else t,
+        "kind": d["kind"],
+        "value": d["value"],
+        "unit": d["unit"],
+        "source": d["source"],
+        "clock_skew": d.get("clock_skew", False),
+    }
+
+
+def _ensure_aware_utc(t: datetime) -> datetime:
+    if hasattr(t, "tzinfo") and t.tzinfo is None:
+        return t.replace(tzinfo=timezone.utc)
+    return t
+
+
+async def patient_vitals_window_bounds(
+    *, patient_id: str, hours: int
+) -> tuple[datetime, datetime] | None:
+    """Return ``(cutoff, t_max)`` for the patient's **recorded** window.
+
+    The window is the ``hours``-long interval **ending at the latest stored
+    sample** for this patient (any kind), not ending at wall-clock "now".
+    """
+    if hours < 1:
+        raise ValueError("hours must be >= 1")
+    db = get_db()
+    row = await db.vitals.find({"patient_id": patient_id}).sort("t", -1).limit(1).to_list(length=1)
+    if not row:
+        return None
+    t_max = _ensure_aware_utc(row[0]["t"])
+    cutoff = t_max - timedelta(hours=hours)
+    return cutoff, t_max
+
+
+async def patient_vitals_binned(
+    *,
+    patient_id: str,
+    hours: int,
+    buckets: int = 12,
+) -> tuple[list[dict], dict[str, dict], dict[str, str]]:
+    """Stream vitals in a **record-anchored** window and bin numeric kinds.
+
+    Window: ``[latest_sample_time - hours, latest_sample_time]`` (any kind
+    sets the anchor). Up to ``buckets`` equal sub-intervals; one mean per
+    (kind, bucket) when that bucket has numeric samples.
+
+    Returns ``(points, latest_by_kind, anchor_meta)`` where ``anchor_meta``
+    has ISO strings ``anchored_from`` and ``anchored_until``.
+    """
+    if hours < 1:
+        raise ValueError("hours must be >= 1")
+    if buckets < 1:
+        raise ValueError("buckets must be >= 1")
+
+    bounds = await patient_vitals_window_bounds(patient_id=patient_id, hours=hours)
+    if bounds is None:
+        return [], {}, {}
+    cutoff, t_max = bounds
+    window_sec = max((t_max - cutoff).total_seconds(), 1.0)
+    bucket_sec = window_sec / buckets
+
+    anchor_meta = {
+        "anchored_from": cutoff.isoformat(),
+        "anchored_until": t_max.isoformat(),
+    }
+
+    cur = (
+        get_db()
+        .vitals.find(
+            {"patient_id": patient_id, "t": {"$gte": cutoff, "$lte": t_max}},
+        )
+        .sort("t", 1)
+    )
+
+    # (kind, bucket_index) -> aggregator for numeric samples
+    acc: dict[tuple[str, int], dict] = {}
+    latest_raw: dict[str, dict] = {}
+
+    async for d in cur:
+        kind = d["kind"]
+        latest_raw[kind] = d
+        val = d.get("value")
+        if not isinstance(val, (int, float)):
+            continue
+        t = _ensure_aware_utc(d["t"])
+        rel = (t - cutoff).total_seconds()
+        if rel < 0:
+            continue
+        bi = min(buckets - 1, max(0, int(rel / bucket_sec)))
+        key = (kind, bi)
+        slot = acc.setdefault(
+            key,
+            {
+                "sum": 0.0,
+                "n": 0,
+                "max_t": t,
+                "unit": d["unit"],
+                "source": d["source"],
+                "clock_skew": bool(d.get("clock_skew", False)),
+            },
+        )
+        slot["sum"] += float(val)
+        slot["n"] += 1
+        if t > slot["max_t"]:
+            slot["max_t"] = t
+            slot["unit"] = d["unit"]
+            slot["source"] = d["source"]
+            slot["clock_skew"] = bool(d.get("clock_skew", False))
+
+    points: list[dict] = []
+    for (kind, _bi), slot in sorted(acc.items(), key=lambda x: (x[0][0], x[0][1])):
+        n = slot["n"]
+        if n <= 0:
+            continue
+        avg = slot["sum"] / n
+        mt = slot["max_t"]
+        points.append(
+            _vital_public_row({
+                "t": mt,
+                "kind": kind,
+                "value": avg,
+                "unit": slot["unit"],
+                "source": slot["source"],
+                "clock_skew": slot["clock_skew"],
+            })
+        )
+
+    latest_out = {k: _vital_public_row(v) for k, v in latest_raw.items()}
+    points.sort(key=lambda r: (r["kind"], r["t"]))
+    return points, latest_out, anchor_meta
+
+
 DEMO_CLINICIAN_VITALS_PID = "e6da3b19-c2c2-47fd-902d-04ec03bb78da"
 DEMO_CLINICIAN_VITALS_SOURCE = "demo_clinician_ui"
 
