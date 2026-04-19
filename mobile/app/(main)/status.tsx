@@ -21,6 +21,7 @@ import {
 } from '../../src/notifications/incoming';
 import { readLastSyncStatus, runSyncOnce, type LastSyncStatus } from '../../src/sync/task';
 import { DashboardTopBar } from '../../src/components/DashboardTopBar';
+import { CheckInSummaryCard } from '../../src/components/CheckInSummaryCard';
 import {
   Button,
   Glass,
@@ -50,7 +51,6 @@ export default function PatientDashboard() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
   const [last, setLast] = useState<LastSyncStatus | null>(null);
-  const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const credsRef = useRef<Credentials | null>(null);
@@ -204,17 +204,6 @@ export default function PatientDashboard() {
     setRefreshing(false);
   };
 
-  const onSyncNow = async () => {
-    setSyncing(true);
-    try {
-      await runSyncOnce().catch(() => {});
-      const s = await readLastSyncStatus();
-      setLast(s);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   if (!creds) {
     return (
       <Screen scroll={false} padded={false}>
@@ -235,12 +224,7 @@ export default function PatientDashboard() {
 
   return (
     <Screen refreshing={refreshing} onRefresh={onPullRefresh}>
-      <DashboardTopBar
-        connected={connected}
-        onSyncPress={onSyncNow}
-        syncing={syncing}
-        profileInitials={initials}
-      />
+      <DashboardTopBar connected={connected} profileInitials={initials} />
 
       <KpiStrip
         connected={connected}
@@ -368,17 +352,14 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
+      {last_call ? <CheckInSummaryCard creds={creds} call={last_call} /> : null}
+
       <Glass padded>
         <View style={styles.chartHeader}>
           <Text style={styles.cardTitle}>Trajectory</Text>
           <Text style={styles.cardCaption}>Deterioration score · last check-ins</Text>
         </View>
         <TrajectoryChart points={points} />
-        <View style={styles.legendRow}>
-          <LegendItem color={palette.calm} label="0 – 0.3 Stable" />
-          <LegendItem color={palette.watch} label="0.3 – 0.6 Watch" />
-          <LegendItem color={palette.crit} label="0.6+ Escalate" />
-        </View>
       </Glass>
     </Screen>
   );
@@ -455,15 +436,6 @@ function KpiTile({
           {hint}
         </Text>
       ) : null}
-    </View>
-  );
-}
-
-function LegendItem({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 }
@@ -615,10 +587,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: space.md,
-    paddingVertical: space.sm,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: palette.glassBorder,
+    paddingTop: space.sm,
     marginBottom: space.sm,
   },
   scoreLabel: {
@@ -657,15 +626,6 @@ const styles = StyleSheet.create({
     color: palette.text,
   },
   cardCaption: { fontSize: 12, color: palette.textDim, marginTop: 2 },
-  legendRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space.md,
-    marginTop: space.sm,
-  },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendDot: { width: 6, height: 6, borderRadius: 3 },
-  legendText: { fontSize: 11, color: palette.textMuted },
 });
 
 const kpiStyles = StyleSheet.create({

@@ -5,7 +5,6 @@ import Svg, {
   Defs,
   LinearGradient,
   Path,
-  Rect,
   Stop,
   Line as SvgLine,
   Text as SvgText,
@@ -122,31 +121,6 @@ export function TrajectoryChart({ points, height = 200 }: Props) {
           <Stop offset="100%" stopColor="#3B82F6" />
         </LinearGradient>
       </Defs>
-
-      {/* Threshold bands — match the web chart's ReferenceArea fills. Slightly
-          higher alpha so they're readable on top of the dark glass surfaces
-          the mobile app now uses (vs the solid black web canvas). */}
-      <Rect
-        x={padding.left}
-        y={padding.top}
-        width={innerW}
-        height={innerH * 0.4}
-        fill="rgba(244,63,94,0.09)"
-      />
-      <Rect
-        x={padding.left}
-        y={padding.top + innerH * 0.4}
-        width={innerW}
-        height={innerH * 0.3}
-        fill="rgba(251,191,36,0.08)"
-      />
-      <Rect
-        x={padding.left}
-        y={padding.top + innerH * 0.7}
-        width={innerW}
-        height={innerH * 0.3}
-        fill="rgba(52,211,153,0.07)"
-      />
 
       {/* Y-axis grid + labels */}
       {gridY.map((g) => (
