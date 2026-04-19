@@ -22,6 +22,15 @@ export type StreamEvent =
       at: string;
     }
   | {
+      type: 'call_completed';
+      call_id: string;
+      patient_id: string;
+      outcome_label: 'fine' | 'schedule_visit' | 'escalated_911';
+      escalation_911: boolean;
+      summary_patient: string | null;
+      summary_nurse: string | null;
+    }
+  | {
       type: 'pending_call';
       patient_id: string;
       mode: 'phone' | 'widget';

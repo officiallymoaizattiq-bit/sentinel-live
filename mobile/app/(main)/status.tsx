@@ -147,7 +147,14 @@ export default function PatientDashboard() {
 
       if (e.type === 'pending_call') {
         setIncoming({ at: e.at, mode: e.mode });
-      } else if (e.type === 'call_scored') {
+      } else if (e.type === 'call_scored' || e.type === 'call_completed') {
+        // `call_scored` lands first (score computed, no summary yet);
+        // `call_completed` lands after Gemini writes summary_patient /
+        // summary_nurse. Both require a calls-refetch so the dashboard shows
+        // the freshest state — without the call_completed branch the AI
+        // summary card stays on "Generating summary…" forever.
+        setIncoming(null);
+        dismissIncomingCallNotification().catch(() => {});
         loadCalls(c);
       }
     },
@@ -155,6 +162,36 @@ export default function PatientDashboard() {
   );
 
   const { connected } = useEventStream(creds, onEvent);
+
+  // Summary-aware polling. If the latest call has neither a Gemini summary
+  // nor a recorded summaries_error, the backend pipeline is still running
+  // (or an SSE packet dropped). Poll /calls every 3s for up to a minute
+  // until summary_patient / summaries_error shows up. Guarantees the
+  // CheckInSummaryCard transitions out of "Generating summary…" even when
+  // SSE is unavailable (e.g. Expo Web, metro restart, app backgrounded).
+  useEffect(() => {
+    if (!creds) return;
+    const last = calls.length > 0 ? calls[calls.length - 1] : null;
+    if (!last) return;
+    const hasSummary = Boolean(last.summary_patient?.trim());
+    const hasError = Boolean(last.summaries_error);
+    if (hasSummary || hasError) return;
+
+    let cancelled = false;
+    let ticks = 0;
+    const id = setInterval(() => {
+      ticks += 1;
+      if (cancelled) return;
+      loadCalls(creds).catch(() => {});
+      if (ticks >= 20) {
+        clearInterval(id);
+      }
+    }, 3_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [creds, calls, loadCalls]);
 
   const points: TrajectoryPoint[] = useMemo(
     () =>
@@ -352,7 +389,7 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
-      {last_call ? <CheckInSummaryCard creds={creds} call={last_call} /> : null}
+      {last_call ? <CheckInSummaryCard call={last_call} /> : null}
 
       <Glass padded>
         <View style={styles.chartHeader}>

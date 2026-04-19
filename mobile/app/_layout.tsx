@@ -1,9 +1,10 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import { loadCredentials, type Credentials } from '../src/auth/storage';
+import { palette } from '../src/components/ui';
 import {
   configureIncomingCallNotifications,
   dismissIncomingCallNotification,
@@ -47,6 +48,31 @@ export default function RootLayout() {
       setReady(true);
     })();
   }, [refreshAuth]);
+
+  // Expo Web renders inside a plain <body> whose default background is white,
+  // which shows through wherever the RN root view doesn't cover the viewport
+  // (e.g. above/below the scroll content). Paint the body with the same
+  // canvas gradient the web dashboard uses so the whole page reads as one
+  // dark blue surface — no behaviour change on native.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof document === 'undefined') return;
+    const prev = {
+      background: document.body.style.background,
+      minHeight: document.body.style.minHeight,
+      margin: document.body.style.margin,
+    };
+    document.body.style.background =
+      'linear-gradient(180deg,#070F1F 0%,#0B1E3D 45%,#0C2748 100%)';
+    document.body.style.minHeight = '100vh';
+    document.body.style.margin = '0';
+    document.documentElement.style.background = '#05070D';
+    return () => {
+      document.body.style.background = prev.background;
+      document.body.style.minHeight = prev.minHeight;
+      document.body.style.margin = prev.margin;
+    };
+  }, []);
 
   // Re-check on every navigation. Without this, a successful pair (which
   // writes credentials and replaces() into a different group) leaves the
@@ -133,8 +159,13 @@ export default function RootLayout() {
     const handleResponse = (response: Notifications.NotificationResponse) => {
       const parsed = payloadFromResponse(response);
       if (!parsed) return;
+      // Always clear the incoming-call notification, regardless of whether
+      // the user tapped Answer, Decline, or the body. The OS keeps the
+      // heads-up pinned until we explicitly dismiss it (action buttons do
+      // NOT auto-dismiss), so without this the banner lingers behind the
+      // call screen and stays visible after the call ends.
+      dismissIncomingCallNotification().catch(() => {});
       if (parsed.action === 'decline') {
-        dismissIncomingCallNotification().catch(() => {});
         return;
       }
       router.push({
@@ -151,16 +182,38 @@ export default function RootLayout() {
   }, [ready, router]);
 
   if (!ready) {
+    // Paint the bootstrap splash with the same canvas colour the rest of
+    // the app uses, otherwise the user sees a white flash for the
+    // ~200ms it takes loadCredentials() to round-trip SecureStore.
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: palette.canvasFlat,
+        }}
+      >
+        <ActivityIndicator color={palette.accent400} />
       </View>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          // Default RN navigator container background is white. That bleeds
+          // through during route transitions, behind translucent status
+          // bars, and at the edges of any screen whose root <View> doesn't
+          // perfectly fill — which is exactly the white-vs-blue mismatch
+          // we see vs. the web canvas. Pin it to the same canvas colour
+          // every Screen uses so the whole app reads as one dark surface.
+          contentStyle: { backgroundColor: palette.canvasFlat },
+          animation: 'fade',
+        }}
+      />
     </SafeAreaProvider>
   );
 }

@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault("MONGO_URI", "mongodb://localhost:27017")
 os.environ.setdefault("MONGO_DB", "sentinel_test")
-os.environ.setdefault("GEMINI_API_KEY", "test")
+os.environ.setdefault("OPENROUTER_API_KEY", "test")
 os.environ.setdefault("ELEVENLABS_API_KEY", "test")
 os.environ.setdefault("ELEVENLABS_AGENT_ID", "agent_test")
 os.environ.setdefault("TWILIO_ACCOUNT_SID", "AC_test")

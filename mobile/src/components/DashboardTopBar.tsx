@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { LiveBadge, palette, radius, space } from './ui';
 
 type Props = {
@@ -29,6 +29,15 @@ export function DashboardTopBar({ connected, profileInitials }: Props) {
           accessibilityRole="image"
           accessibilityLabel={`Patient ${profileInitials}`}
         >
+          <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+            <Defs>
+              <LinearGradient id="avatarFill" x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0%" stopColor={palette.accent500} stopOpacity={0.3} />
+                <Stop offset="100%" stopColor={palette.accent700} stopOpacity={0.2} />
+              </LinearGradient>
+            </Defs>
+            <Rect x="0" y="0" width="100%" height="100%" fill="url(#avatarFill)" rx={10} ry={10} />
+          </Svg>
           <Text style={styles.avatarText}>{profileInitials}</Text>
         </View>
       </View>
@@ -39,7 +48,15 @@ export function DashboardTopBar({ connected, profileInitials }: Props) {
 function SentinelLogoMark() {
   return (
     <View style={styles.markOuter}>
-      <View style={styles.markGlow} />
+      <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+        <Defs>
+          <LinearGradient id="logoFill" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0%" stopColor={palette.accent300} />
+            <Stop offset="100%" stopColor={palette.accent600} />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#logoFill)" rx={10} ry={10} />
+      </Svg>
       <View style={styles.markInner}>
         <Svg width={18} height={18} viewBox="0 0 24 24">
           <Path
@@ -97,11 +114,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  markGlow: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: palette.accent500,
-    opacity: 0.95,
-  },
   markInner: {
     width: 30,
     height: 30,
@@ -122,7 +134,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: palette.glassBorderStrong,
-    backgroundColor: 'rgba(59,130,246,0.22)',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },

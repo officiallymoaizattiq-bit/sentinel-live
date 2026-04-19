@@ -62,8 +62,10 @@ function CallSurface() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
-  const { startSession, endSession } = useConversationControls();
+  const { startSession, endSession, getId } = useConversationControls();
   const { status } = useConversationStatus();
+  const conversationIdRef = useRef<string | null>(null);
+  const finalizeSentRef = useRef(false);
 
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
@@ -137,14 +139,51 @@ function CallSurface() {
     if (status === 'connected' && callStartMs == null) {
       setCallStartMs(Date.now());
     }
-  }, [status, callStartMs]);
+    // Capture the EL conversation id as soon as it's assigned. getId() may
+    // briefly return '' during the handshake, so we poll the ref on every
+    // status change and keep the first non-empty value.
+    if (!conversationIdRef.current) {
+      try {
+        const id = getId?.();
+        if (id) conversationIdRef.current = id;
+      } catch {
+        // SDK may not expose getId on older versions.
+      }
+    }
+  }, [status, callStartMs, getId]);
 
   useEffect(() => {
     dismissIncomingCallNotification().catch(() => {});
   }, []);
 
+  // Call duration guardrails. Voice agent prompt (docs/elevenlabs-agent.md)
+  // asks the agent to wrap up between 50–55s, but we can't fully trust an LLM
+  // to self-end. Client enforces both a wrap-up nudge and a hard cap:
+  //   - WRAP_UP_AT_MS: show a "Sending your answers to your care team…"
+  //     banner so the user knows the call is about to close.
+  //   - HARD_END_AT_MS: tear down the EL session if the agent hasn't already.
+  const WRAP_UP_AT_MS = 55_000;
+  const HARD_END_AT_MS = 60_000;
+  const [wrappingUp, setWrappingUp] = useState(false);
+
   const liveRef = useRef(live);
   liveRef.current = live;
+
+  // Tell the backend the call has ended so it can pull transcript + audio
+  // from ElevenLabs, score, and generate Gemini summaries — immediately,
+  // instead of waiting on the 30s scheduler poll. Idempotent server-side.
+  const sendFinalizeToServer = useCallback(async (c: Credentials | null) => {
+    if (!c || finalizeSentRef.current) return;
+    const convId = conversationIdRef.current;
+    if (!convId) return;
+    finalizeSentRef.current = true;
+    try {
+      await api.mobileEndCall(c, convId);
+    } catch {
+      // Server-side scheduler poll will retry within ~30s. Worst-case the
+      // summary just shows up slightly later.
+    }
+  }, []);
 
   const drainAndPost = useCallback(async (c: Credentials | null) => {
     if (!c || drainedRef.current) return;
@@ -169,10 +208,50 @@ function CallSurface() {
     if (terminalRef.current) return;
     terminalRef.current = true;
 
+    dismissIncomingCallNotification().catch(() => {});
+    sendFinalizeToServer(creds).catch(() => {});
     drainAndPost(creds).catch(() => {});
     const timeoutId = setTimeout(() => router.back(), 1200);
     return () => clearTimeout(timeoutId);
-  }, [status, hasBeenLive, creds, drainAndPost, router]);
+  }, [status, hasBeenLive, creds, drainAndPost, router, sendFinalizeToServer]);
+
+  // Belt-and-braces sweep: on unmount (e.g. user hits system back), clear any
+  // incoming-call notification still posted. Without this the heads-up
+  // lingers because the OS doesn't know the call has ended.
+  useEffect(() => {
+    return () => {
+      dismissIncomingCallNotification().catch(() => {});
+    };
+  }, []);
+
+  // Wrap-up nudge + hard cap. Anchored to callStartMs so it doesn't fire
+  // during the "Connecting…" phase. Pair of timers is cancelled on unmount.
+  useEffect(() => {
+    if (callStartMs == null) return;
+    const now = Date.now();
+    const wrapDelay = Math.max(0, WRAP_UP_AT_MS - (now - callStartMs));
+    const endDelay = Math.max(0, HARD_END_AT_MS - (now - callStartMs));
+    const wrapTimer = setTimeout(() => setWrappingUp(true), wrapDelay);
+    const endTimer = setTimeout(() => {
+      setWrappingUp(true);
+      try {
+        endSession?.();
+      } catch {
+        // best-effort — the useEffect watching `status` will still run.
+      }
+      sendFinalizeToServer(creds).catch(() => {});
+      if (!terminalRef.current) {
+        terminalRef.current = true;
+        drainAndPost(creds).catch(() => {});
+        dismissIncomingCallNotification().catch(() => {});
+        setTimeout(() => router.back(), 1200);
+      }
+    }, endDelay);
+    return () => {
+      clearTimeout(wrapTimer);
+      clearTimeout(endTimer);
+    };
+  }, [callStartMs, endSession, creds, drainAndPost, router, sendFinalizeToServer]);
 
   const onEndPress = async () => {
     try {
@@ -180,6 +259,8 @@ function CallSurface() {
     } catch {
       // best-effort
     }
+    dismissIncomingCallNotification().catch(() => {});
+    sendFinalizeToServer(creds).catch(() => {});
     if (!terminalRef.current) {
       terminalRef.current = true;
       drainAndPost(creds).catch(() => {});
@@ -241,6 +322,14 @@ function CallSurface() {
       </View>
 
       <View style={styles.middleRegion}>
+        {wrappingUp ? (
+          <View style={styles.wrapBanner}>
+            <Text style={styles.wrapTitle}>Sending your answers to your care team…</Text>
+            <Text style={styles.wrapBody}>
+              A nurse will follow up if anything needs attention. You can hang up now.
+            </Text>
+          </View>
+        ) : null}
         <LiveVitalsTile
           hrBpm={live.latestHr?.bpm ?? null}
           hrTIso={live.latestHr?.tIso ?? null}
@@ -693,6 +782,17 @@ const styles = StyleSheet.create({
     borderColor: palette.calmBorder,
   },
   batchInfo: { color: palette.calmText, fontSize: 13, textAlign: 'center' },
+
+  wrapBanner: {
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.glassBgAccent,
+    borderWidth: 1,
+    borderColor: 'rgba(96,165,250,0.35)',
+    gap: 4,
+  },
+  wrapTitle: { color: palette.text, fontSize: 14, fontWeight: '600' },
+  wrapBody: { color: palette.textMuted, fontSize: 12, lineHeight: 17 },
 
   controlsColumn: {
     gap: space.md,
