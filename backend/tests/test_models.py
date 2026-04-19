@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
 from sentinel.models import (
+    Alert,
+    Call,
     Caregiver,
     Consent,
     Patient,
@@ -36,3 +38,45 @@ def test_score_action_enum():
         recommended_action=RecommendedAction.NURSE_ALERT,
     )
     assert s.recommended_action is RecommendedAction.NURSE_ALERT
+
+
+def test_call_defaults_new_fields():
+    c = Call(patient_id="p1", called_at=datetime(2026, 4, 18))
+    assert c.conversation_id is None
+    assert c.ended_at is None
+    assert c.end_reason is None
+    assert c.summary_patient is None
+    assert c.summary_nurse is None
+    assert c.summaries_generated_at is None
+    assert c.summaries_error is None
+    assert c.outcome_label is None
+    assert c.escalation_911 is False
+
+
+def test_call_accepts_new_fields():
+    c = Call(
+        patient_id="p1",
+        called_at=datetime(2026, 4, 18),
+        conversation_id="conv_abc",
+        ended_at=datetime(2026, 4, 18, 0, 0, 40),
+        end_reason="timeout_40s",
+        summary_patient="You're doing okay.",
+        summary_nurse="Vitals stable; no SIRS criteria met.",
+        summaries_generated_at=datetime(2026, 4, 18),
+        outcome_label="fine",
+        escalation_911=False,
+    )
+    assert c.conversation_id == "conv_abc"
+    assert c.end_reason == "timeout_40s"
+
+
+def test_alert_defaults_new_fields():
+    a = Alert(
+        patient_id="p1",
+        call_id="c1",
+        severity=RecommendedAction.NURSE_ALERT,
+        channel=["sms"],
+        sent_at=datetime(2026, 4, 18),
+    )
+    assert a.acknowledged is False
+    assert a.acknowledged_at is None
