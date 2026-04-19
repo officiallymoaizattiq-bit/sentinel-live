@@ -1,6 +1,6 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import { loadCredentials, type Credentials } from '../src/auth/storage';
@@ -47,6 +47,31 @@ export default function RootLayout() {
       setReady(true);
     })();
   }, [refreshAuth]);
+
+  // Expo Web renders inside a plain <body> whose default background is white,
+  // which shows through wherever the RN root view doesn't cover the viewport
+  // (e.g. above/below the scroll content). Paint the body with the same
+  // canvas gradient the web dashboard uses so the whole page reads as one
+  // dark blue surface — no behaviour change on native.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (typeof document === 'undefined') return;
+    const prev = {
+      background: document.body.style.background,
+      minHeight: document.body.style.minHeight,
+      margin: document.body.style.margin,
+    };
+    document.body.style.background =
+      'linear-gradient(180deg,#070F1F 0%,#0B1E3D 45%,#0C2748 100%)';
+    document.body.style.minHeight = '100vh';
+    document.body.style.margin = '0';
+    document.documentElement.style.background = '#05070D';
+    return () => {
+      document.body.style.background = prev.background;
+      document.body.style.minHeight = prev.minHeight;
+      document.body.style.margin = prev.margin;
+    };
+  }, []);
 
   // Re-check on every navigation. Without this, a successful pair (which
   // writes credentials and replaces() into a different group) leaves the
