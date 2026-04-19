@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -26,6 +24,19 @@ import {
 } from '../../src/notifications/incoming';
 import { sendDemoVitals } from '../../src/sync/demo';
 import { readLastSyncStatus, runSyncOnce, type LastSyncStatus } from '../../src/sync/task';
+import {
+  Button,
+  Glass,
+  LiveBadge,
+  Screen,
+  SeverityChip,
+  font,
+  palette,
+  radius,
+  scoreToSeverity,
+  severityMeta,
+  space,
+} from '../../src/components/ui';
 
 // Foreground auto-sync interval. expo-background-fetch's 15-min minimum is
 // way too coarse for a live demo, and iOS may never actually fire it. While
@@ -87,7 +98,6 @@ export default function PatientDashboard() {
           await handleAuthFailure();
           return;
         }
-        // Calls failure is non-fatal — keep the previous list.
       }
     },
     [handleAuthFailure],
@@ -110,10 +120,6 @@ export default function PatientDashboard() {
     }, [refreshAll]),
   );
 
-  // Foreground auto-sync. Runs runSyncOnce() on a fixed interval while the
-  // dashboard is mounted, plus immediately on mount, so the demo doesn't
-  // depend on the user remembering to tap "Sync now". expo-background-fetch
-  // still handles the killed-app case (registered in _layout.tsx).
   useEffect(() => {
     if (!creds) return;
     let cancelled = false;
@@ -121,24 +127,19 @@ export default function PatientDashboard() {
       try {
         await runSyncOnce();
       } catch {
-        // best-effort; runSyncOnce already writes a status entry on error
+        // best-effort
       }
       if (cancelled) return;
       const s = await readLastSyncStatus();
       if (!cancelled) setLast(s);
-      // Refresh the per-type diagnostics alongside the sync status. This is
-      // the bit that turns "OK — 0 samples" into something actionable
-      // ("Health Connect has 0 heart_rate, 0 SpO2 — check Samsung Health
-      // sync"). diagnose() is cheap (no record reads), safe to call on
-      // every tick.
       try {
         const d = await getHealthAdapter().diagnose();
         if (!cancelled) setDiag(d);
       } catch {
-        // ignore; the dashboard handles a null diag.
+        // ignore
       }
     };
-    tick(); // immediate
+    tick();
     const id = setInterval(tick, FOREGROUND_SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
@@ -146,17 +147,11 @@ export default function PatientDashboard() {
     };
   }, [creds]);
 
-  // Ask for notification permission once we know the user has paired. This
-  // is independent of the call flow itself — we want the heads-up
-  // notification ready BEFORE the first incoming call arrives, otherwise
-  // the SSE event fires and the OS silently drops the notification.
   useEffect(() => {
     if (!creds) return;
     ensureNotificationPermission().catch(() => {});
   }, [creds]);
 
-  // SSE event handler. Filter to this patient_id client-side, mirroring the
-  // web /patient view (the /api/stream endpoint is not per-patient today).
   const onEvent = useCallback(
     (e: StreamEvent) => {
       const c = credsRef.current;
@@ -165,11 +160,6 @@ export default function PatientDashboard() {
 
       if (e.type === 'pending_call') {
         setIncoming({ at: e.at, mode: e.mode });
-        // Fire the heads-up notification regardless of foreground state.
-        // The notification handler we set in incoming.ts forces the banner
-        // to display even when the dashboard is open, so the user gets
-        // the same "ringing" affordance whether they're looking at the
-        // app or have it backgrounded.
         showIncomingCallNotification({
           patientId: c.patientId,
           mode: e.mode,
@@ -187,7 +177,10 @@ export default function PatientDashboard() {
   const points: TrajectoryPoint[] = useMemo(
     () =>
       calls
-        .filter((c): c is CallRecord & { score: NonNullable<CallRecord['score']> } => c.score !== null)
+        .filter(
+          (c): c is CallRecord & { score: NonNullable<CallRecord['score']> } =>
+            c.score !== null,
+        )
         .map((c) => ({
           t: new Date(c.called_at).toLocaleTimeString([], {
             hour: '2-digit',
@@ -198,16 +191,14 @@ export default function PatientDashboard() {
     [calls],
   );
   const last_call = calls.length > 0 ? calls[calls.length - 1] : null;
-  const isCritical = last_call?.score?.recommended_action === 'suggest_911';
+  const latestScore = last_call?.score ?? null;
+  const severity = latestScore ? scoreToSeverity(latestScore.deterioration) : null;
+  const isCritical = latestScore?.recommended_action === 'suggest_911';
 
   const onAnswer = () => {
     const mode = incoming?.mode ?? 'phone';
     setIncoming(null);
     dismissIncomingCallNotification().catch(() => {});
-    // Push the dedicated full-screen call route. The route owns the
-    // ConversationProvider lifecycle from here, including the post-call
-    // vitals batch flush, so the dashboard doesn't need to track call
-    // state itself any more.
     router.push({ pathname: '/(main)/call', params: { mode } });
   };
 
@@ -233,12 +224,6 @@ export default function PatientDashboard() {
     }
   };
 
-  // Wipes the sync cursor and immediately re-runs sync. The next pass
-  // starts from `now - initialLookbackMinutes` (24h by default), so any
-  // historical data sitting in Health Connect that arrived after the
-  // cursor advanced will get backfilled. Useful when the user can see
-  // 7000+ HR samples in the diagnostics line but "Last sync — 0 samples"
-  // because the cursor has already moved past them.
   const onBackfill = async () => {
     setSyncing(true);
     try {
@@ -261,7 +246,7 @@ export default function PatientDashboard() {
     try {
       getHealthAdapter().openSettings();
     } catch {
-      // No-op: adapter may not be available on simulator/preview.
+      // no-op
     }
   };
 
@@ -293,108 +278,157 @@ export default function PatientDashboard() {
 
   if (!creds) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator />
-      </View>
+      <Screen scroll={false} padded={false}>
+        <View style={styles.center}>
+          <ActivityIndicator color={palette.accent400} />
+        </View>
+      </Screen>
     );
   }
 
+  const initials =
+    patient?.name
+      .split(' ')
+      .map((s) => s[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() ?? '—';
+
   return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
-    >
+    <Screen refreshing={refreshing} onRefresh={onPullRefresh}>
       {/* Header */}
       <View style={styles.headerRow}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
         <View style={{ flex: 1 }}>
+          <Text style={styles.kicker}>YOUR PATIENT PORTAL</Text>
           <Text style={styles.h1}>{patient?.name ?? 'Patient'}</Text>
-          <Text style={styles.subtle}>Your recent check-ins</Text>
+          {patient?.surgery_type ? (
+            <Text style={styles.subtle}>{patient.surgery_type}</Text>
+          ) : null}
         </View>
-        <View style={[styles.badge, connected ? styles.badgeLive : styles.badgeConnecting]}>
-          <Text style={connected ? styles.badgeLiveText : styles.badgeConnectingText}>
-            {connected ? '● live' : '● connecting'}
-          </Text>
-        </View>
+        <LiveBadge connected={connected} />
       </View>
 
       {loadingPatient && !patient ? (
-        <View style={[styles.card, { alignItems: 'center' }]}>
-          <ActivityIndicator />
-        </View>
+        <Glass padded>
+          <View style={{ alignItems: 'center' }}>
+            <ActivityIndicator color={palette.accent400} />
+          </View>
+        </Glass>
       ) : null}
 
       {loadError ? (
-        <View style={[styles.card, styles.cardWarn]}>
-          <Text style={styles.warnText}>{loadError}</Text>
-          <TouchableOpacity onPress={refreshAll}>
+        <Glass tone="crit" padded>
+          <Text style={styles.errorText}>{loadError}</Text>
+          <TouchableOpacity onPress={refreshAll} style={{ marginTop: space.sm }}>
             <Text style={styles.linkInline}>Retry</Text>
           </TouchableOpacity>
-        </View>
+        </Glass>
       ) : null}
 
-      {/* Incoming call banner. The OS-level heads-up notification is the
-          primary affordance — this in-app panel is the redundant fallback
-          for when the dashboard is already open and you'd rather tap a
-          green button than reach for the notification shade. */}
+      {/* Incoming call banner — green accented to match the web's answer affordance */}
       {incoming && (
-        <View style={styles.incomingCard}>
-          <Text style={styles.incomingTitle}>Sentinel is calling you</Text>
+        <Glass tone="calm" padded>
+          <View style={styles.incomingHeader}>
+            <View style={styles.pulseDot} />
+            <Text style={styles.incomingTitle}>Sentinel is calling you</Text>
+          </View>
           <Text style={styles.incomingBody}>
             Your care team would like a quick check-in.
           </Text>
           <View style={styles.incomingActions}>
-            <TouchableOpacity
-              style={styles.answerBtn}
-              onPress={onAnswer}
-              accessibilityRole="button"
-            >
-              <Text style={styles.answerBtnText}>Answer</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.dismissBtn}
-              onPress={onDismiss}
-              accessibilityRole="button"
-            >
-              <Text style={styles.dismissBtnText}>Dismiss</Text>
-            </TouchableOpacity>
+            <Button label="Answer" onPress={onAnswer} variant="success" style={{ flex: 1 }} />
+            <Button label="Dismiss" onPress={onDismiss} variant="outline" style={{ flex: 1 }} />
           </View>
-        </View>
+        </Glass>
       )}
 
-      {/* Latest check-in */}
-      {last_call?.score && (
-        <View style={[styles.card, isCritical && styles.cardCritical]}>
-          <Text style={styles.cardLabel}>Latest check-in</Text>
-          <Text style={[styles.summary, isCritical && styles.summaryCritical]}>
-            {last_call.score.summary}
+      {/* Hero status tile — mirrors the web's "Latest check-in" hero */}
+      {latestScore && severity && (
+        <Glass tone={isCritical ? 'crit' : 'default'} padded>
+          <View style={styles.latestHeader}>
+            <Text style={styles.label}>LATEST CHECK-IN</Text>
+            <SeverityChip
+              severity={severity}
+              label={
+                isCritical
+                  ? 'Escalate'
+                  : severity === 'warn'
+                    ? 'Escalating'
+                    : severity === 'watch'
+                      ? 'Watch'
+                      : 'Stable'
+              }
+            />
+          </View>
+          <Text
+            style={[styles.summary, isCritical && { color: palette.critText }]}
+          >
+            {latestScore.summary}
           </Text>
-          <Text style={styles.subtle}>
-            {new Date(last_call.called_at).toLocaleString()}
+          <View style={styles.scoreRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scoreLabel}>Deterioration</Text>
+              <View style={styles.scoreValueRow}>
+                <Text
+                  style={[
+                    styles.scoreValue,
+                    { color: severityMeta(severity).color },
+                  ]}
+                >
+                  {latestScore.deterioration.toFixed(2)}
+                </Text>
+                <Text style={styles.scoreUnit}>/ 1.00</Text>
+              </View>
+            </View>
+            <View style={styles.scoreMini}>
+              <Text style={styles.scoreMiniLabel}>qSOFA</Text>
+              <Text style={styles.scoreMiniValue}>{latestScore.qsofa}</Text>
+            </View>
+            <View style={styles.scoreMini}>
+              <Text style={styles.scoreMiniLabel}>NEWS2</Text>
+              <Text style={styles.scoreMiniValue}>{latestScore.news2}</Text>
+            </View>
+          </View>
+          <Text style={styles.timestamp}>
+            {new Date(last_call!.called_at).toLocaleString()}
           </Text>
           {isCritical ? (
             <Text style={styles.criticalNote}>
               Recommended action: contact emergency services.
             </Text>
           ) : null}
-        </View>
+        </Glass>
       )}
 
       {/* Trajectory */}
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Trend</Text>
+      <Glass padded>
+        <View style={styles.chartHeader}>
+          <Text style={styles.cardTitle}>Trajectory</Text>
+          <Text style={styles.cardCaption}>Deterioration score · last check-ins</Text>
+        </View>
         <TrajectoryChart points={points} />
-      </View>
+        <View style={styles.legendRow}>
+          <LegendItem color={palette.calm} label="0 – 0.3 Stable" />
+          <LegendItem color={palette.watch} label="0.3 – 0.6 Watch" />
+          <LegendItem color={palette.crit} label="0.6+ Escalate" />
+        </View>
+      </Glass>
 
-      {/* Sync status (smaller, debug-ish) */}
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Vitals sync (auto every 30s)</Text>
+      {/* Vitals sync tile */}
+      <Glass padded>
+        <View style={styles.chartHeader}>
+          <Text style={styles.cardTitle}>Vitals sync</Text>
+          <Text style={styles.cardCaption}>Auto every 30s</Text>
+        </View>
         {last ? (
-          <>
+          <View style={{ gap: 4 }}>
             <Text style={styles.body}>
-              Last sync: {new Date(last.at).toLocaleString()}
+              Last sync {formatRelative(last.at)}
             </Text>
-            <Text style={[styles.body, syncResultColor(last.result)]}>
+            <Text style={[styles.body, { color: syncResultColor(last.result) }]}>
               {syncLabel(last.result)}
               {last.acceptedTotal != null
                 ? ` — ${last.acceptedTotal} new sample${last.acceptedTotal === 1 ? '' : 's'} uploaded`
@@ -406,98 +440,101 @@ export default function PatientDashboard() {
             {last.message ? <Text style={styles.muted}>{last.message}</Text> : null}
             {last.result === 'ok' && (last.acceptedTotal ?? 0) === 0 ? (
               <Text style={styles.muted}>
-                "0 new" just means nothing arrived since the last sync —
-                see the Health Connect totals below for the full picture.
+                "0 new" just means nothing arrived since the last sync. See Health Connect below
+                for what's currently in the store.
               </Text>
             ) : null}
-          </>
+          </View>
         ) : (
           <Text style={styles.muted}>No sync has run yet.</Text>
         )}
 
-        {/* Health Connect diagnostics. Shows what's actually present in
-            the local Health Connect store over the last 24h, independent
-            of the sync cursor. This is the source-of-truth view: if these
-            counts are non-zero, the Samsung Health → Health Connect bridge
-            is working; if "Last sync" still shows 0, the cursor has just
-            moved past those records and a Backfill will pull them. */}
         {diag ? (
           <View style={styles.diagBox}>
-            <Text style={styles.diagHeading}>Health Connect (last 24h)</Text>
-            <Text style={styles.diagLine}>SDK: {diag.sdkStatus}</Text>
-            <Text style={styles.diagLine}>
-              Granted: {diag.grantedScopes.length} permission
-              {diag.grantedScopes.length === 1 ? '' : 's'}
-            </Text>
-            {Object.keys(diag.lastQueryCountsByKind).length > 0 ? (
-              <Text style={styles.diagLine}>
-                Samples by type:{' '}
-                {Object.entries(diag.lastQueryCountsByKind)
-                  .filter(([, n]) => n > 0)
-                  .map(([k, n]) => `${k}=${n}`)
-                  .join(', ') || 'nothing visible'}
+            <Text style={styles.label}>HEALTH CONNECT · LAST 24H</Text>
+            <View style={styles.diagRow}>
+              <Text style={styles.diagKey}>SDK</Text>
+              <Text style={styles.diagVal}>{diag.sdkStatus}</Text>
+            </View>
+            <View style={styles.diagRow}>
+              <Text style={styles.diagKey}>Granted</Text>
+              <Text style={styles.diagVal}>
+                {diag.grantedScopes.length} permission
+                {diag.grantedScopes.length === 1 ? '' : 's'}
               </Text>
+            </View>
+            {Object.keys(diag.lastQueryCountsByKind).length > 0 ? (
+              <View style={styles.diagRow}>
+                <Text style={styles.diagKey}>Samples</Text>
+                <Text style={[styles.diagVal, { flexShrink: 1 }]}>
+                  {Object.entries(diag.lastQueryCountsByKind)
+                    .filter(([, n]) => n > 0)
+                    .map(([k, n]) => `${k}=${n}`)
+                    .join(', ') || 'nothing visible'}
+                </Text>
+              </View>
             ) : null}
             {isLikelyBridgeEmpty(last, diag) ? (
-              <Text style={styles.diagHint}>
-                Health Connect shows 0 samples in the last 24h. On Samsung,
-                open Samsung Health → Settings → Health Connect and turn on
-                the data types you want shared (Heart rate, Oxygen
-                saturation, etc).
-              </Text>
+              <View style={styles.diagHintBox}>
+                <Text style={styles.diagHintText}>
+                  Health Connect shows 0 samples in the last 24h. On Samsung, open Samsung
+                  Health → Settings → Health Connect and turn on the data types you want
+                  shared (Heart rate, Oxygen saturation, etc).
+                </Text>
+              </View>
             ) : null}
             <TouchableOpacity onPress={onOpenHealthSettings}>
-              <Text style={styles.linkInline}>Open Health Connect</Text>
+              <Text style={styles.linkInline}>Open Health Connect ↗</Text>
             </TouchableOpacity>
           </View>
         ) : null}
-        <View style={styles.btnRow}>
-          <TouchableOpacity
-            onPress={onSyncNow}
-            disabled={syncing}
-            style={[styles.syncBtn, styles.btnFlex, syncing && styles.syncBtnDisabled]}
-          >
-            {syncing ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.syncBtnText}>Sync now</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onBackfill}
-            disabled={syncing}
-            style={[styles.demoBtn, styles.btnFlex, syncing && styles.syncBtnDisabled]}
-          >
-            {syncing ? (
-              <ActivityIndicator color="#0a84ff" />
-            ) : (
-              <Text style={styles.demoBtnText}>Backfill 24h</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-        <TouchableOpacity
-          onPress={onSendDemoVitals}
-          disabled={demoSending}
-          style={[styles.ghostBtn, demoSending && styles.syncBtnDisabled]}
-        >
-          {demoSending ? (
-            <ActivityIndicator color="#0a84ff" />
-          ) : (
-            <Text style={styles.ghostBtnText}>Send synthetic test vitals</Text>
-          )}
-        </TouchableOpacity>
-        <Text style={styles.muted}>
-          "Backfill 24h" resets the sync cursor and pulls everything from
-          Health Connect for the last day — useful when there's data in
-          Health Connect but the cursor has moved past it. "Send synthetic
-          test vitals" injects fake samples for offline / no-watch demos.
-        </Text>
-      </View>
 
-      <TouchableOpacity onPress={() => router.push('/(main)/settings')}>
-        <Text style={styles.link}>Settings</Text>
+        <View style={styles.btnRow}>
+          <Button
+            label="Sync now"
+            onPress={onSyncNow}
+            loading={syncing}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label="Backfill 24h"
+            onPress={onBackfill}
+            loading={syncing}
+            variant="outline"
+            style={{ flex: 1 }}
+          />
+        </View>
+
+        <Button
+          label="Send synthetic test vitals"
+          onPress={onSendDemoVitals}
+          loading={demoSending}
+          variant="ghost"
+          fullWidth
+        />
+
+        <Text style={styles.muted}>
+          "Backfill 24h" resets the sync cursor and pulls everything from Health Connect for
+          the last day. "Send synthetic test vitals" injects fake samples for offline demos.
+        </Text>
+      </Glass>
+
+      <TouchableOpacity
+        onPress={() => router.push('/(main)/settings')}
+        style={styles.settingsLink}
+      >
+        <Text style={styles.linkInline}>⚙  Settings</Text>
       </TouchableOpacity>
-    </ScrollView>
+    </Screen>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
   );
 }
 
@@ -513,7 +550,7 @@ function formatError(e: unknown): string {
 function syncLabel(r: LastSyncStatus['result']): string {
   switch (r) {
     case 'ok':
-      return 'OK';
+      return 'Healthy';
     case 'no_creds':
       return 'Not paired';
     case 'no_perms':
@@ -531,19 +568,23 @@ function syncLabel(r: LastSyncStatus['result']): string {
   }
 }
 
-function syncResultColor(r: LastSyncStatus['result']) {
-  if (r === 'ok') return { color: '#1a7f37' };
-  if (r === 'partial' || r === 'rate_limited' || r === 'dev_unsigned')
-    return { color: '#bf8700' };
-  return { color: '#cf222e' };
+function syncResultColor(r: LastSyncStatus['result']): string {
+  if (r === 'ok') return palette.calm;
+  if (r === 'partial' || r === 'rate_limited' || r === 'dev_unsigned') return palette.watch;
+  return palette.crit;
 }
 
-/**
- * Heuristic: the platform thinks everything is fine (sync succeeded, we
- * have permissions) but the last query window came back empty. On Samsung,
- * this nearly always means Samsung Health hasn't bridged the relevant
- * record types into Health Connect yet.
- */
+function formatRelative(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 10) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function isLikelyBridgeEmpty(
   last: LastSyncStatus | null,
   diag: HealthDiagnostics,
@@ -551,155 +592,190 @@ function isLikelyBridgeEmpty(
   if (!last || last.result !== 'ok') return false;
   if ((last.acceptedTotal ?? 0) > 0) return false;
   if (diag.grantedScopes.length === 0) return false;
-  const total = Object.values(diag.lastQueryCountsByKind).reduce(
-    (a, b) => a + b,
-    0,
-  );
+  const total = Object.values(diag.lastQueryCountsByKind).reduce((a, b) => a + b, 0);
   return total === 0;
 }
 
 const styles = StyleSheet.create({
-  scroll: { backgroundColor: '#f5f5f7' },
-  container: { padding: 16, paddingTop: 64, paddingBottom: 48, gap: 12 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    gap: space.md,
   },
-  h1: { fontSize: 24, fontWeight: '700', color: '#0F172A' },
-  subtle: { fontSize: 13, color: '#64748B' },
-
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: palette.accent500,
     borderWidth: 1,
+    borderColor: palette.accent600,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  badgeLive: { borderColor: 'rgba(16,185,129,0.4)' },
-  badgeConnecting: { borderColor: 'rgba(245,158,11,0.4)' },
-  badgeLiveText: { fontSize: 10, color: '#059669', fontWeight: '600' },
-  badgeConnectingText: { fontSize: 10, color: '#B45309', fontWeight: '600' },
-
-  card: { backgroundColor: 'white', borderRadius: 14, padding: 16, gap: 6 },
-  cardWarn: { backgroundColor: '#FEF3C7' },
-  cardCritical: {
-    backgroundColor: '#FEE2E2',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.4)',
-  },
-  cardLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  avatarText: { color: '#F8FAFF', fontWeight: '700', fontSize: 18 },
+  kicker: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.4,
+    color: palette.accent400,
     marginBottom: 2,
   },
-  summary: { fontSize: 16, color: '#0F172A', lineHeight: 22 },
-  summaryCritical: { color: '#7F1D1D' },
-  criticalNote: {
-    marginTop: 6,
-    fontSize: 13,
-    color: '#991B1B',
+  h1: {
+    fontSize: font.h1.size,
+    fontWeight: '700',
+    color: palette.text,
+    letterSpacing: font.h1.letterSpacing,
+  },
+  subtle: { fontSize: 13, color: palette.textMuted, marginTop: 2 },
+
+  label: {
+    fontSize: 10,
+    color: palette.textDim,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    marginBottom: space.sm,
+  },
+  linkInline: {
+    fontSize: 14,
+    color: palette.accent300,
     fontWeight: '600',
   },
-  warnText: { fontSize: 13, color: '#92400E' },
-  linkInline: {
-    marginTop: 6,
-    fontSize: 13,
-    color: '#0a84ff',
-    textDecorationLine: 'underline',
-  },
 
-  incomingCard: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: 'rgba(16,185,129,0.4)',
-    borderRadius: 14,
-    padding: 16,
-    gap: 8,
-  },
-  incomingTitle: { fontSize: 15, fontWeight: '600', color: '#065F46' },
-  incomingBody: { fontSize: 13, color: '#047857' },
-  incomingActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  answerBtn: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  answerBtnText: { color: 'white', fontWeight: '600', fontSize: 14 },
-  dismissBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.2)',
-  },
-  dismissBtnText: { color: '#475569', fontSize: 14 },
+  errorText: { fontSize: 13, color: palette.critText, lineHeight: 19 },
 
-  diagBox: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.25)',
-    gap: 4,
-  },
-  diagHeading: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+  incomingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
     marginBottom: 4,
   },
-  diagLine: { fontSize: 12, color: '#475569' },
-  diagHint: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#92400E',
-    backgroundColor: '#FEF3C7',
-    padding: 8,
-    borderRadius: 6,
-    lineHeight: 17,
+  pulseDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: palette.calm,
+    shadowColor: palette.calm,
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  incomingTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.calmText,
+  },
+  incomingBody: {
+    fontSize: 13,
+    color: palette.textMuted,
+    marginTop: 2,
+    marginBottom: space.md,
+  },
+  incomingActions: { flexDirection: 'row', gap: space.sm },
+
+  latestHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: space.sm,
+  },
+  summary: {
+    fontSize: 17,
+    color: palette.text,
+    lineHeight: 24,
+    marginBottom: space.md,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: space.md,
+    paddingVertical: space.sm,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: palette.glassBorder,
+    marginBottom: space.sm,
+  },
+  scoreLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.0,
+    color: palette.textDim,
+    marginBottom: 2,
+  },
+  scoreValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
+  scoreValue: { fontSize: 34, fontWeight: '700', letterSpacing: -0.5 },
+  scoreUnit: { fontSize: 13, color: palette.textDim },
+  scoreMini: {
+    alignItems: 'flex-end',
+  },
+  scoreMiniLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: palette.textDim,
+    marginBottom: 2,
+  },
+  scoreMiniValue: { fontSize: 20, fontWeight: '700', color: palette.text },
+  timestamp: { fontSize: 12, color: palette.textDim },
+  criticalNote: {
+    marginTop: space.sm,
+    fontSize: 13,
+    color: palette.critText,
+    fontWeight: '600',
   },
 
-  body: { fontSize: 14, color: '#222' },
-  muted: { fontSize: 12, color: '#888' },
-
-  syncBtn: {
-    backgroundColor: '#0a84ff',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 12,
+  chartHeader: { marginBottom: space.sm },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.text,
   },
-  syncBtnDisabled: { opacity: 0.5 },
-  syncBtnText: { color: 'white', fontWeight: '600' },
-  demoBtn: {
-    backgroundColor: 'white',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 12,
+  cardCaption: { fontSize: 12, color: palette.textDim, marginTop: 2 },
+  legendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.md,
+    marginTop: space.sm,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 6, height: 6, borderRadius: 3 },
+  legendText: { fontSize: 11, color: palette.textMuted },
+
+  body: { fontSize: 14, color: palette.text },
+  muted: { fontSize: 12, color: palette.textDim, lineHeight: 17 },
+
+  diagBox: {
+    marginTop: space.md,
+    padding: space.md,
+    backgroundColor: 'rgba(10,15,31,0.6)',
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#0a84ff',
+    borderColor: palette.glassBorder,
+    gap: space.xs,
   },
-  demoBtnText: { color: '#0a84ff', fontWeight: '600' },
-  btnRow: { flexDirection: 'row', gap: 8 },
-  btnFlex: { flex: 1 },
-
-  ghostBtn: {
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
+  diagRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
+  diagKey: { fontSize: 12, color: palette.textDim, fontWeight: '600' },
+  diagVal: { fontSize: 12, color: palette.text, textAlign: 'right' },
+  diagHintBox: {
+    marginTop: space.sm,
+    padding: space.sm,
+    backgroundColor: palette.watchBg,
+    borderWidth: 1,
+    borderColor: palette.watchBorder,
+    borderRadius: radius.sm,
   },
-  ghostBtnText: { color: '#0a84ff', fontWeight: '500', fontSize: 14 },
+  diagHintText: { fontSize: 12, color: palette.watchText, lineHeight: 17 },
 
-  link: { fontSize: 14, color: '#0a84ff', textAlign: 'center', padding: 12 },
+  btnRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    marginTop: space.md,
+  },
+
+  settingsLink: {
+    alignSelf: 'center',
+    paddingVertical: space.md,
+    paddingHorizontal: space.xl,
+  },
 });

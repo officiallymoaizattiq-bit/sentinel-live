@@ -10,12 +10,20 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { getHealthAdapter } from '../../src/health';
 import { registerBackgroundSync, runSyncOnce } from '../../src/sync/task';
+import {
+  AuroraBackground,
+  Button,
+  Glass,
+  font,
+  palette,
+  radius,
+  space,
+} from '../../src/components/ui';
 
 type Phase = 'intro' | 'sheet' | 'awaiting-system' | 'verifying';
 
@@ -27,8 +35,7 @@ export default function PermissionsScreen() {
 
   // Auto-detect when the user returns from the system Health Connect
   // settings screen. If they granted anything, advance to Status without
-  // requiring another tap. This is the trick that makes the round-trip
-  // feel like a single guided handoff instead of two disconnected screens.
+  // requiring another tap.
   const appState = useRef(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (next: AppStateStatus) => {
@@ -63,14 +70,10 @@ export default function PermissionsScreen() {
     setError(null);
     setPhase('awaiting-system');
     const granted = await adapter.requestPermissions();
-    // If the OS dismisses without sending us to background (e.g. denied
-    // immediately, or Health Connect missing), the AppState listener won't
-    // fire. Fall back to the direct return value.
     if (granted) {
       await onGranted();
       return;
     }
-    // If we got back here without going through background, treat as denied.
     if (appState.current === 'active') {
       setPhase('sheet');
       setError(
@@ -85,23 +88,56 @@ export default function PermissionsScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Allow vitals access</Text>
-        <Text style={styles.body}>
-          Sentinel reads your heart rate, blood oxygen, respiratory rate, temperature, sleep, and
-          activity from {sourceName}. Your care team uses this alongside check-in calls to spot
-          early signs of post-operative deterioration.
-        </Text>
-        <Text style={styles.bodyMuted}>Sentinel never writes to {sourceName}.</Text>
-        <TouchableOpacity onPress={() => setPhase('sheet')} style={styles.button}>
-          <Text style={styles.buttonText}>Get started</Text>
-        </TouchableOpacity>
+      <AuroraBackground />
+
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>STEP 2 OF 2</Text>
+          <Text style={styles.title}>Allow vitals access</Text>
+          <Text style={styles.subtitle}>
+            Sentinel reads your heart rate, blood oxygen, respiratory rate, temperature, sleep,
+            and activity from {sourceName}. Your care team uses this alongside check-in calls to
+            spot early signs of post-operative deterioration.
+          </Text>
+        </View>
+
+        <Glass padded style={{ gap: space.md }}>
+          <SourceRow sourceName={sourceName} />
+
+          <View style={styles.bullet}>
+            <View style={styles.bulletDot} />
+            <Text style={styles.bulletText}>
+              Read-only — Sentinel never writes to {sourceName}.
+            </Text>
+          </View>
+          <View style={styles.bullet}>
+            <View style={styles.bulletDot} />
+            <Text style={styles.bulletText}>
+              Synced every 15 min, encrypted end-to-end.
+            </Text>
+          </View>
+          <View style={styles.bullet}>
+            <View style={styles.bulletDot} />
+            <Text style={styles.bulletText}>
+              You can revoke access anytime in system settings.
+            </Text>
+          </View>
+        </Glass>
+
+        <Button
+          label="Get started"
+          onPress={() => setPhase('sheet')}
+          size="lg"
+          fullWidth
+        />
       </View>
 
       <HandoffSheet
         visible={phase !== 'intro'}
         loading={phase === 'awaiting-system' || phase === 'verifying'}
-        loadingLabel={phase === 'verifying' ? 'Checking access\u2026' : 'Opening Health Connect\u2026'}
+        loadingLabel={
+          phase === 'verifying' ? 'Checking access\u2026' : 'Opening Health Connect\u2026'
+        }
         error={error}
         sourceName={sourceName}
         onContinue={onContinue}
@@ -111,6 +147,20 @@ export default function PermissionsScreen() {
           setError(null);
         }}
       />
+    </View>
+  );
+}
+
+function SourceRow({ sourceName }: { sourceName: string }) {
+  return (
+    <View style={styles.sourceRow}>
+      <View style={styles.sourceIcon}>
+        <Text style={{ fontSize: 22 }}>❤</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sourceLabel}>DATA SOURCE</Text>
+        <Text style={styles.sourceName}>{sourceName}</Text>
+      </View>
     </View>
   );
 }
@@ -134,14 +184,14 @@ function HandoffSheet({
   onContinue,
   onClose,
 }: SheetProps) {
-  const translateY = useRef(new Animated.Value(600)).current;
+  const translateY = useRef(new Animated.Value(700)).current;
   const backdrop = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(translateY, {
-        toValue: visible ? 0 : 600,
-        duration: 260,
+        toValue: visible ? 0 : 700,
+        duration: 280,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
@@ -158,9 +208,7 @@ function HandoffSheet({
       <Animated.View style={[styles.backdrop, { opacity: backdrop }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
-      <Animated.View
-        style={[styles.sheet, { transform: [{ translateY }] }]}
-      >
+      <Animated.View style={[styles.sheet, { transform: [{ translateY }] }]}>
         <View style={styles.handle} />
         <Text style={styles.sheetTitle}>Connect to {sourceName}</Text>
         <Text style={styles.sheetBody}>
@@ -170,33 +218,47 @@ function HandoffSheet({
         </Text>
 
         <View style={styles.steps}>
-          <Step n={1} text={Platform.OS === 'android' ? 'Tap "Allow all" at the top of the Health Connect screen.' : 'Tap "Turn On All" at the top.'} />
-          <Step n={2} text={Platform.OS === 'android' ? 'Press the back button or swipe back when you\u2019re done.' : 'Tap "Allow" in the top-right corner.'} />
+          <Step
+            n={1}
+            text={
+              Platform.OS === 'android'
+                ? 'Tap "Allow all" at the top of the Health Connect screen.'
+                : 'Tap "Turn On All" at the top.'
+            }
+          />
+          <Step
+            n={2}
+            text={
+              Platform.OS === 'android'
+                ? 'Press the back button or swipe back when you\u2019re done.'
+                : 'Tap "Allow" in the top-right corner.'
+            }
+          />
           <Step n={3} text="Sentinel will pick up where it left off automatically." />
         </View>
 
-        {error && <Text style={styles.error}>{error}</Text>}
+        {error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
-        <TouchableOpacity
+        <Button
+          label={loading ? loadingLabel : `Continue to ${sourceName}`}
           onPress={onContinue}
-          disabled={loading}
-          style={[styles.primary, loading && styles.primaryDisabled]}
-        >
-          {loading ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color="white" />
-              <Text style={styles.loadingText}>{loadingLabel}</Text>
-            </View>
-          ) : (
-            <Text style={styles.primaryText}>
-              Continue to {sourceName}
-            </Text>
-          )}
-        </TouchableOpacity>
+          loading={loading}
+          fullWidth
+          size="lg"
+          style={{ marginTop: space.sm }}
+        />
 
-        <TouchableOpacity onPress={onClose} disabled={loading} style={styles.secondary}>
-          <Text style={[styles.secondaryText, loading && { opacity: 0.4 }]}>Not now</Text>
-        </TouchableOpacity>
+        <Button
+          label="Not now"
+          onPress={onClose}
+          variant="ghost"
+          disabled={loading}
+          fullWidth
+        />
       </Animated.View>
     </Modal>
   );
@@ -214,80 +276,128 @@ function Step({ n, text }: { n: number; text: string }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#f5f5f7' },
-  card: { backgroundColor: 'white', borderRadius: 16, padding: 24, gap: 16 },
-  title: { fontSize: 24, fontWeight: '600' },
-  body: { fontSize: 15, color: '#444', lineHeight: 21 },
-  bodyMuted: { fontSize: 13, color: '#888', lineHeight: 18 },
-  button: {
-    backgroundColor: '#0a84ff',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
+  container: { flex: 1, backgroundColor: palette.canvasFlat },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: space.xl,
+    gap: space.xxl,
   },
-  buttonText: { color: 'white', fontWeight: '600', fontSize: 16 },
+  header: { gap: space.xs },
+  brand: {
+    fontSize: font.kicker.size,
+    letterSpacing: 2,
+    fontWeight: '700',
+    color: palette.accent400,
+  },
+  title: {
+    fontSize: font.hero.size,
+    fontWeight: '700',
+    color: palette.text,
+    letterSpacing: font.hero.letterSpacing,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: palette.textMuted,
+    lineHeight: 22,
+  },
+
+  sourceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    paddingBottom: space.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.glassBorder,
+  },
+  sourceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(244,63,94,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(244,63,94,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sourceLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: palette.textDim,
+    letterSpacing: 1,
+  },
+  sourceName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.text,
+    marginTop: 2,
+  },
+
+  bullet: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+  },
+  bulletDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: palette.accent400,
+    marginTop: 7,
+  },
+  bulletText: { flex: 1, fontSize: 13, color: palette.textMuted, lineHeight: 19 },
 
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(3,6,15,0.72)',
   },
   sheet: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'white',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 24,
+    backgroundColor: '#0B1220',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: palette.glassBorderStrong,
+    paddingHorizontal: space.xl,
     paddingTop: 12,
-    paddingBottom: 32,
-    gap: 16,
+    paddingBottom: 36,
+    gap: space.md,
   },
   handle: {
     alignSelf: 'center',
     width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#d0d0d5',
-    marginBottom: 8,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: palette.glassBorderStrong,
+    marginBottom: space.sm,
   },
-  sheetTitle: { fontSize: 20, fontWeight: '600' },
-  sheetBody: { fontSize: 15, color: '#444', lineHeight: 21 },
+  sheetTitle: { fontSize: 22, fontWeight: '700', color: palette.text },
+  sheetBody: { fontSize: 14, color: palette.textMuted, lineHeight: 20 },
 
-  steps: { gap: 12, marginTop: 4 },
-  step: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  steps: { gap: space.sm, marginTop: space.xs },
+  step: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   stepBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#0a84ff',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: palette.accent500,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepBadgeText: { color: 'white', fontWeight: '700', fontSize: 13 },
-  stepText: { flex: 1, fontSize: 14, color: '#333', lineHeight: 20 },
+  stepBadgeText: { color: '#F8FAFF', fontWeight: '700', fontSize: 13 },
+  stepText: { flex: 1, fontSize: 14, color: palette.text, lineHeight: 20 },
 
-  error: {
-    fontSize: 13,
-    color: '#b3261e',
-    backgroundColor: '#fdecea',
-    padding: 12,
-    borderRadius: 8,
+  errorBox: {
+    padding: space.md,
+    backgroundColor: palette.critBg,
+    borderWidth: 1,
+    borderColor: palette.critBorder,
+    borderRadius: radius.md,
   },
-
-  primary: {
-    backgroundColor: '#0a84ff',
-    paddingVertical: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  primaryDisabled: { opacity: 0.7 },
-  primaryText: { color: 'white', fontWeight: '600', fontSize: 16 },
-  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  loadingText: { color: 'white', fontWeight: '500', fontSize: 15 },
-
-  secondary: { paddingVertical: 12, alignItems: 'center' },
-  secondaryText: { color: '#0a84ff', fontWeight: '500', fontSize: 15 },
+  errorText: { fontSize: 13, color: palette.critText, lineHeight: 18 },
 });

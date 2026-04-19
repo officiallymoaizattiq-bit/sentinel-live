@@ -13,6 +13,7 @@ import {
   useConversationControls,
   useConversationStatus,
 } from '@elevenlabs/react-native';
+import { palette, radius, space } from './ui';
 
 type Props = {
   agentId: string;
@@ -181,20 +182,27 @@ async function ensureMicPermission(): Promise<boolean> {
 }
 
 const styles = StyleSheet.create({
-  container: { gap: 8 },
+  container: {
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: palette.glassBorder,
+    backgroundColor: palette.glassBg,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  heading: { fontSize: 14, fontWeight: '600', color: '#0F172A' },
+  heading: { fontSize: 14, fontWeight: '600', color: palette.text },
   endBtn: {
     fontSize: 12,
-    color: '#64748B',
-    textDecorationLine: 'underline',
+    color: palette.accent300,
+    fontWeight: '600',
   },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  statusText: { fontSize: 13, color: '#475569' },
-  errorText: { fontSize: 12, color: '#B91C1C', marginTop: 6 },
+  statusText: { fontSize: 13, color: palette.textMuted },
+  errorText: { fontSize: 12, color: palette.critText, marginTop: 6 },
 });
