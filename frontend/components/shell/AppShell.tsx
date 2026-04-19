@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Critical911Banner } from "@/components/admin/Critical911Banner";
 
 function SentinelLogoMark() {
   return (
@@ -51,10 +49,8 @@ function Topbar() {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   return (
     <>
-      {pathname?.startsWith("/admin") && <Critical911Banner />}
       <div className="mx-auto w-full max-w-[1400px] p-4 lg:p-6">
         <Topbar />
         <main className="animate-float-in pb-10">{children}</main>

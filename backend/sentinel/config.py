@@ -1,11 +1,22 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Load `.env` from the backend package root (`backend/.env`), not the shell cwd.
+# Otherwise `uvicorn sentinel.main:app` started from the repo root ignores
+# `backend/.env` and `mongo_uri` falls back to localhost.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE) if _ENV_FILE.is_file() else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "sentinel"
