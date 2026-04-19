@@ -11,7 +11,23 @@ export type StreamEvent =
   | { type: "pending_call"; patient_id: string; mode: "phone" | "widget";
       at: string }
   | { type: "vitals"; patient_id: string; device_id: string;
-      accepted: number; at: string };
+      accepted: number; at: string }
+  | {
+      type: "call_completed";
+      call_id: string;
+      patient_id: string;
+      outcome_label: "fine" | "schedule_visit" | "escalated_911";
+      escalation_911: boolean;
+      summary_patient: string | null;
+      summary_nurse: string | null;
+    }
+  | {
+      type: "alert_opened";
+      alert_id: string;
+      patient_id: string;
+      severity: string;
+    }
+  | { type: "alert_ack"; alert_id: string };
 
 export function useEventStream(onEvent: (e: StreamEvent) => void): {
   connected: boolean;
