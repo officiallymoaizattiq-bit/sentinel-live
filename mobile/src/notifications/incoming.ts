@@ -227,11 +227,37 @@ export async function showIncomingCallNotification(
 }
 
 export async function dismissIncomingCallNotification(): Promise<void> {
+  // Our own locally-scheduled copy. Safe no-op if it isn't present.
   try {
     await Notifications.dismissNotificationAsync(INCOMING_CALL_NOTIFICATION_ID);
     await Notifications.cancelScheduledNotificationAsync(INCOMING_CALL_NOTIFICATION_ID);
   } catch {
-    // Notification might already be gone; that's fine.
+    // ignore
+  }
+
+  // Sweep everything else the OS still has on-screen. The remote Expo push
+  // that actually rings the device (backend/sentinel/push.py) is scheduled
+  // by the OS with a provider-assigned identifier, NOT
+  // INCOMING_CALL_NOTIFICATION_ID — so the dismissNotificationAsync() above
+  // doesn't touch it. Without this loop the "Sentinel is calling you"
+  // heads-up stays pinned after the call ends / is answered / is scored,
+  // and the user has to swipe it away by hand.
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    await Promise.all(
+      presented
+        .filter((n) => {
+          const data = n.request?.content?.data as { kind?: string } | undefined;
+          return data?.kind === 'incoming-call';
+        })
+        .map((n) =>
+          Notifications.dismissNotificationAsync(n.request.identifier).catch(
+            () => {},
+          ),
+        ),
+    );
+  } catch {
+    // ignore
   }
 }
 

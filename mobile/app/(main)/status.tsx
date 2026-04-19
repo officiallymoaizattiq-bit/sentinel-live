@@ -148,6 +148,10 @@ export default function PatientDashboard() {
       if (e.type === 'pending_call') {
         setIncoming({ at: e.at, mode: e.mode });
       } else if (e.type === 'call_scored') {
+        // Server has finalised the call. Anything ringing/posted on the
+        // lock screen is stale — clear it before re-rendering the feed.
+        setIncoming(null);
+        dismissIncomingCallNotification().catch(() => {});
         loadCalls(c);
       }
     },

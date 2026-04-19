@@ -169,10 +169,20 @@ function CallSurface() {
     if (terminalRef.current) return;
     terminalRef.current = true;
 
+    dismissIncomingCallNotification().catch(() => {});
     drainAndPost(creds).catch(() => {});
     const timeoutId = setTimeout(() => router.back(), 1200);
     return () => clearTimeout(timeoutId);
   }, [status, hasBeenLive, creds, drainAndPost, router]);
+
+  // Belt-and-braces sweep: on unmount (e.g. user hits system back), clear any
+  // incoming-call notification still posted. Without this the heads-up
+  // lingers because the OS doesn't know the call has ended.
+  useEffect(() => {
+    return () => {
+      dismissIncomingCallNotification().catch(() => {});
+    };
+  }, []);
 
   const onEndPress = async () => {
     try {
@@ -180,6 +190,7 @@ function CallSurface() {
     } catch {
       // best-effort
     }
+    dismissIncomingCallNotification().catch(() => {});
     if (!terminalRef.current) {
       terminalRef.current = true;
       drainAndPost(creds).catch(() => {});
