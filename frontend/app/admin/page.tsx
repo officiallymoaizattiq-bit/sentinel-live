@@ -26,6 +26,7 @@ export default async function Dashboard() {
     api.patients().catch(() => []),
     api.alerts().catch(() => []),
   ]);
+  const { count: initialOpenAlertCount } = await api.openAlertCount().catch(() => ({ count: 0 }));
 
   const summaryEntries = await Promise.all(
     patients.map(async (p): Promise<readonly [string, CallSummary]> => {
@@ -66,6 +67,7 @@ export default async function Dashboard() {
         initialPatients={patients}
         initialAlerts={alerts}
         initialAvgDeterioration={avgDeterioration}
+        initialOpenAlertCount={initialOpenAlertCount}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
