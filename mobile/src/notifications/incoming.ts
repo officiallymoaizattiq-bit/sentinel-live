@@ -35,6 +35,18 @@ import * as Notifications from 'expo-notifications';
 // audio attributes (defaulted to USAGE_NOTIFICATION) and ended up being
 // silenced by the foreground heads-up rules + sticky flag combo. v2 is
 // configured for ringtone-style audio and is created fresh.
+//
+// Note on bypassDnd: We intentionally do NOT set bypassDnd here.
+// expo-notifications@0.29 silently drops the bypassDnd field on Android
+// (it isn't read by NotificationsChannelSerializer.java, and the Expo
+// team has confirmed it's not supported because Android only allows
+// privileged system apps to flip mBypassDnd). To survive Bedtime/Sleeping
+// modes the user must either grant DND access in Settings → Apps →
+// Sentinel → Notifications → Override Do Not Disturb, OR add Sentinel
+// to "Priority Apps" under the active Mode. There's no all-code fix that
+// works on stock Android without writing a native module that calls
+// NotificationChannel#setBypassDnd(true) directly + requesting
+// ACCESS_NOTIFICATION_POLICY.
 export const INCOMING_CALL_CHANNEL_ID = 'incoming-calls-v2';
 export const INCOMING_CALL_CATEGORY_ID = 'sentinel.incoming-call';
 export const INCOMING_CALL_NOTIFICATION_ID = 'sentinel.incoming-call.active';
@@ -102,15 +114,18 @@ export async function configureIncomingCallNotifications(): Promise<void> {
   ]);
 
   if (Platform.OS === 'android') {
-    // Best-effort cleanup of the v1 channel. If the user updated from a
-    // build that used the old (silent) channel, leaving it behind would
-    // confuse the Settings → Notifications page with two "Incoming
-    // check-in calls" entries. Failure here is fine (channel may not
-    // exist on a fresh install).
-    try {
-      await Notifications.deleteNotificationChannelAsync('incoming-calls');
-    } catch {
-      // ignore
+    // Best-effort cleanup of older channel revisions. If the user updated
+    // from a build that used an earlier (silent or stale) channel,
+    // leaving them behind would clutter Settings → Notifications. Each
+    // delete is independently safe to fail (channel may not exist on a
+    // fresh install). Includes incoming-calls-v3 because we briefly
+    // shipped that ID while debugging bypassDnd; superseded back to v2.
+    for (const stale of ['incoming-calls', 'incoming-calls-v3']) {
+      try {
+        await Notifications.deleteNotificationChannelAsync(stale);
+      } catch {
+        // ignore
+      }
     }
 
     await Notifications.setNotificationChannelAsync(INCOMING_CALL_CHANNEL_ID, {
@@ -127,7 +142,8 @@ export async function configureIncomingCallNotifications(): Promise<void> {
       enableVibrate: true,
       lightColor: '#10B981',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: false,
+      // bypassDnd is intentionally omitted; see channel-ID comment for why
+      // expo-notifications can't set it from JS.
     });
   }
 }
