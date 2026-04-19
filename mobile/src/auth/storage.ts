@@ -1,4 +1,21 @@
-import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import * as ExpoSecureStore from 'expo-secure-store';
+
+// expo-secure-store is iOS/Android only. For local web previews (Expo Web),
+// fall back to a localStorage-backed shim so the app can mount and we can
+// iterate on the UI without the app exploding on startup.
+const SecureStore = Platform.OS === 'web'
+  ? {
+      getItemAsync: async (k: string) =>
+        typeof window === 'undefined' ? null : window.localStorage.getItem(k),
+      setItemAsync: async (k: string, v: string) => {
+        if (typeof window !== 'undefined') window.localStorage.setItem(k, v);
+      },
+      deleteItemAsync: async (k: string) => {
+        if (typeof window !== 'undefined') window.localStorage.removeItem(k);
+      },
+    }
+  : ExpoSecureStore;
 
 const KEYS = {
   deviceToken: 'sentinel.device_token',

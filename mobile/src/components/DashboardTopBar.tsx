@@ -1,4 +1,4 @@
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { Button, LiveBadge, palette, radius, space } from './ui';
 
@@ -7,18 +7,17 @@ type Props = {
   onSyncPress: () => void | Promise<void>;
   syncing: boolean;
   profileInitials: string;
-  onProfilePress: () => void;
 };
 
 /**
- * Matches the web AppShell top bar: Sentinel mark + title, live pill, compact Sync, profile.
+ * Matches the web AppShell top bar: Sentinel mark + title, live pill,
+ * compact Sync, static initials avatar.
  */
 export function DashboardTopBar({
   connected,
   onSyncPress,
   syncing,
   profileInitials,
-  onProfilePress,
 }: Props) {
   return (
     <View style={styles.bar}>
@@ -26,7 +25,7 @@ export function DashboardTopBar({
         <SentinelLogoMark />
         <View style={styles.brandText}>
           <Text style={styles.brandTitle}>Sentinel</Text>
-          <Text style={styles.brandSub}>Post-op monitor</Text>
+          <Text style={styles.brandSub}>POST-OP MONITOR</Text>
         </View>
       </View>
 
@@ -39,15 +38,13 @@ export function DashboardTopBar({
           variant="outline"
           compact
         />
-        <TouchableOpacity
-          onPress={onProfilePress}
-          accessibilityRole="button"
-          accessibilityLabel="Open settings"
-          activeOpacity={0.85}
+        <View
           style={styles.avatar}
+          accessibilityRole="image"
+          accessibilityLabel={`Patient ${profileInitials}`}
         >
           <Text style={styles.avatarText}>{profileInitials}</Text>
-        </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
