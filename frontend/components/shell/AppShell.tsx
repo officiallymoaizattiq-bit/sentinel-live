@@ -2,30 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { Critical911Banner } from "@/components/admin/Critical911Banner";
-
-function Clock() {
-  const [now, setNow] = useState<string>("");
-  useEffect(() => {
-    const tick = () =>
-      setNow(
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: false,
-        })
-      );
-    tick();
-    const id = setInterval(tick, 30_000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <span className="num hidden whitespace-nowrap text-sm text-slate-400 lg:inline">
-      {now}
-    </span>
-  );
-}
 
 function SentinelLogoMark() {
   return (
@@ -65,13 +42,6 @@ function Topbar() {
       </Link>
 
       <div className="flex shrink-0 items-center gap-2.5">
-        <div className="flex items-center gap-2 whitespace-nowrap rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]" />
-          <span className="text-xs font-medium text-slate-200">Demo</span>
-        </div>
-
-        <Clock />
-
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-accent-500/30 to-accent-700/20 text-xs font-semibold text-white">
           RN
         </div>

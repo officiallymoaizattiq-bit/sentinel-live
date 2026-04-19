@@ -8,9 +8,9 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ConversationProvider,
@@ -25,6 +25,8 @@ import { dismissIncomingCallNotification } from '../../src/notifications/incomin
 import { postVitalsBatch } from '../../src/sync/client';
 import {
   AuroraBackground,
+  Button,
+  Glass,
   font,
   palette,
   radius,
@@ -58,6 +60,7 @@ export default function CallScreen() {
 
 function CallSurface() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const { startSession, endSession } = useConversationControls();
   const { status } = useConversationStatus();
@@ -148,14 +151,14 @@ function CallSurface() {
     drainedRef.current = true;
     const samples = liveRef.current.drainBuffer();
     if (samples.length === 0) {
-      setPostBatchInfo('No watch samples captured during the call.');
+      setPostBatchInfo('No watch samples in this call window.');
       return;
     }
     const result = await postVitalsBatch(c, samples);
     if (result.ok) {
-      setPostBatchInfo(`Sent ${result.accepted} samples from the call window.`);
+      setPostBatchInfo(`${result.accepted} vitals sample${result.accepted === 1 ? '' : 's'} sent.`);
     } else {
-      setPostBatchInfo(`Couldn\u2019t send call vitals (${result.kind}).`);
+      setPostBatchInfo(`Could not sync vitals (${result.kind}).`);
     }
   }, []);
 
@@ -199,7 +202,15 @@ function CallSurface() {
   const isConnected = status === 'connected';
 
   return (
-    <View style={styles.root}>
+    <View
+      style={[
+        styles.root,
+        {
+          paddingTop: insets.top + 12,
+          paddingBottom: Math.max(insets.bottom, space.lg),
+        },
+      ]}
+    >
       <AuroraBackground />
 
       <View style={styles.topRegion}>
@@ -250,14 +261,14 @@ function CallSurface() {
         ) : null}
       </View>
 
-      <View style={styles.controlsRow}>
-        <ControlButton
+      <View style={styles.controlsColumn}>
+        <Button
           label={muted ? 'Unmute' : 'Mute'}
-          icon={muted ? '🔇' : '🎙'}
           onPress={onMuteToggle}
-          tone="neutral"
+          variant="outline"
+          fullWidth
         />
-        <ControlButton label="End" icon="✕" onPress={onEndPress} tone="danger" large />
+        <Button label="End call" onPress={onEndPress} variant="danger" fullWidth size="lg" />
       </View>
     </View>
   );
@@ -265,8 +276,19 @@ function CallSurface() {
 
 function MissingAgentScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.root, { justifyContent: 'center', paddingHorizontal: space.xl }]}>
+    <View
+      style={[
+        styles.root,
+        {
+          justifyContent: 'center',
+          paddingHorizontal: space.xl,
+          paddingTop: insets.top + 24,
+          paddingBottom: Math.max(insets.bottom, space.lg),
+        },
+      ]}
+    >
       <AuroraBackground />
       <Text style={styles.kicker}>SENTINEL</Text>
       <Text style={[styles.name, { marginTop: space.md }]}>Live check-in unavailable</Text>
@@ -274,8 +296,8 @@ function MissingAgentScreen() {
         EXPO_PUBLIC_ELEVENLABS_AGENT_ID is not set. Configure it in{' '}
         <Text style={styles.mono}>mobile/.env</Text> and restart the dev client.
       </Text>
-      <View style={[styles.controlsRow, { marginTop: space.huge }]}>
-        <ControlButton label="Close" icon="✕" onPress={() => router.back()} tone="neutral" />
+      <View style={{ marginTop: space.huge }}>
+        <Button label="Close" onPress={() => router.back()} variant="outline" fullWidth />
       </View>
     </View>
   );
@@ -370,7 +392,7 @@ function LiveVitalsTile({
   if (!callOpen) return null;
   const hasSpo2 = spo2Pct != null;
   return (
-    <View style={styles.vitalsTile}>
+    <Glass tone="strong" padded style={styles.vitalsTile}>
       <View style={styles.vitalsHeader}>
         <View style={styles.liveTag}>
           <View style={styles.liveTagDot} />
@@ -399,10 +421,10 @@ function LiveVitalsTile({
         ) : null}
       </View>
       <Text style={styles.vitalsFootnote}>
-        Polling Health Connect every 5s. Wearables (especially Samsung) often batch HR writes
-        every ~10–15 min when not in a workout, so the displayed value may lag the watch face.
+        From Health Connect every 5s. Some watches batch heart rate outside workouts, so values
+        can lag the watch face.
       </Text>
-    </View>
+    </Glass>
   );
 }
 
@@ -451,51 +473,6 @@ function VitalCell({
         <Text style={styles.vitalCellAge}>waiting…</Text>
       )}
     </View>
-  );
-}
-
-type ControlTone = 'neutral' | 'danger';
-function ControlButton({
-  label,
-  icon,
-  onPress,
-  tone,
-  large,
-}: {
-  label: string;
-  icon: string;
-  onPress: () => void;
-  tone: ControlTone;
-  large?: boolean;
-}) {
-  const bg = tone === 'danger' ? palette.crit : 'rgba(255,255,255,0.08)';
-  const border = tone === 'danger' ? '#FDA4AF' : palette.glassBorderStrong;
-  const size = large ? 88 : 68;
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      activeOpacity={0.8}
-      style={styles.controlBtnOuter}
-    >
-      <View
-        style={[
-          styles.controlBtn,
-          {
-            backgroundColor: bg,
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderColor: border,
-            shadowColor: tone === 'danger' ? palette.crit : 'transparent',
-          },
-        ]}
-      >
-        <Text style={[styles.controlBtnIcon, large && { fontSize: 30 }]}>{icon}</Text>
-      </View>
-      <Text style={styles.controlBtnLabel}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -563,8 +540,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.canvasFlat,
     paddingHorizontal: space.xl,
-    paddingTop: 72,
-    paddingBottom: space.huge,
   },
   topRegion: { alignItems: 'center', gap: space.sm },
   kicker: {
@@ -635,11 +610,6 @@ const styles = StyleSheet.create({
   middleRegion: { flex: 1, justifyContent: 'center', gap: space.md },
 
   vitalsTile: {
-    backgroundColor: palette.glassBg,
-    borderWidth: 1,
-    borderColor: palette.glassBorder,
-    borderRadius: radius.xl,
-    padding: space.lg,
     gap: space.md,
   },
   vitalsHeader: {
@@ -724,23 +694,10 @@ const styles = StyleSheet.create({
   },
   batchInfo: { color: palette.calmText, fontSize: 13, textAlign: 'center' },
 
-  controlsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'flex-end',
+  controlsColumn: {
+    gap: space.md,
     paddingTop: space.md,
   },
-  controlBtnOuter: { alignItems: 'center', gap: space.sm },
-  controlBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  controlBtnIcon: { color: '#F8FAFF', fontSize: 26 },
-  controlBtnLabel: { color: palette.textMuted, fontSize: 13, fontWeight: '500' },
 
   mono: { fontFamily: 'Courier', color: palette.textMuted },
 });

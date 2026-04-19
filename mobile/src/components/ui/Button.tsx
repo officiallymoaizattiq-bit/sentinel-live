@@ -21,6 +21,8 @@ type Props = {
   fullWidth?: boolean;
   style?: ViewStyle;
   size?: 'md' | 'lg';
+  /** Tighter pill for toolbars (e.g. top bar Sync). */
+  compact?: boolean;
 };
 
 /**
@@ -38,10 +40,14 @@ export function Button({
   fullWidth,
   style,
   size = 'md',
+  compact,
 }: Props) {
   const isDisabled = disabled || loading;
   const { bg, border, color } = VARIANT_STYLES[variant];
-  const py = size === 'lg' ? 16 : 13;
+  const py = compact ? 8 : size === 'lg' ? 16 : 13;
+  const px = compact ? 12 : space.xl;
+  const minH = compact ? 36 : 44;
+  const fontSize = compact ? 13 : size === 'lg' ? 16 : 15;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -55,6 +61,8 @@ export function Button({
           backgroundColor: bg,
           borderColor: border,
           paddingVertical: py,
+          paddingHorizontal: px,
+          minHeight: minH,
         },
         fullWidth && styles.full,
         isDisabled && styles.disabled,
@@ -67,7 +75,7 @@ export function Button({
         ) : (
           <>
             {icon}
-            <Text style={[styles.label, { color, fontSize: size === 'lg' ? 16 : 15 }]}>
+            <Text style={[styles.label, { color, fontSize }]}>
               {label}
             </Text>
           </>
@@ -109,10 +117,8 @@ const styles = StyleSheet.create({
   root: {
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: space.xl,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
   },
   full: { alignSelf: 'stretch' },
   inner: { flexDirection: 'row', alignItems: 'center', gap: 8 },

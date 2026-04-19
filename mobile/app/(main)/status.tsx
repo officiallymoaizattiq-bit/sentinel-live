@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
+  Modal,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ApiCallError, api, type CallRecord, type Patient } from '../../src/api/client';
 import {
@@ -23,18 +27,19 @@ import {
 } from '../../src/notifications/incoming';
 import { sendDemoVitals } from '../../src/sync/demo';
 import { readLastSyncStatus, runSyncOnce, type LastSyncStatus } from '../../src/sync/task';
+import { DashboardTopBar } from '../../src/components/DashboardTopBar';
+import { SettingsPanel } from '../../src/components/SettingsPanel';
 import {
   Button,
   Glass,
-  LiveBadge,
   Screen,
   SeverityChip,
-  font,
   palette,
   radius,
   scoreToSeverity,
   severityMeta,
   space,
+  type Severity,
 } from '../../src/components/ui';
 
 // Foreground auto-sync interval. expo-background-fetch's 15-min minimum is
@@ -47,6 +52,7 @@ type IncomingCall = { at: string; mode: 'phone' | 'widget' };
 
 export default function PatientDashboard() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -58,6 +64,7 @@ export default function PatientDashboard() {
   const [demoSending, setDemoSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [diag, setDiag] = useState<HealthDiagnostics | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const credsRef = useRef<Credentials | null>(null);
   credsRef.current = creds;
@@ -196,6 +203,15 @@ export default function PatientDashboard() {
   const severity = latestScore ? scoreToSeverity(latestScore.deterioration) : null;
   const isCritical = latestScore?.recommended_action === 'suggest_911';
 
+  const totalCalls = calls.length;
+  const callsToday = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return calls.filter((c) => new Date(c.called_at) >= start).length;
+  }, [calls]);
+
+  const heroSeverity: Severity = severity ?? 'calm';
+
   const onAnswer = () => {
     const mode = incoming?.mode ?? 'phone';
     setIncoming(null);
@@ -297,20 +313,65 @@ export default function PatientDashboard() {
 
   return (
     <Screen refreshing={refreshing} onRefresh={onPullRefresh}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>YOUR PATIENT PORTAL</Text>
-          <Text style={styles.h1}>{patient?.name ?? 'Patient'}</Text>
-          {patient?.surgery_type ? (
-            <Text style={styles.subtle}>{patient.surgery_type}</Text>
-          ) : null}
-        </View>
-        <LiveBadge connected={connected} />
-      </View>
+      <DashboardTopBar
+        connected={connected}
+        onSyncPress={onSyncNow}
+        syncing={syncing}
+        profileInitials={initials}
+        onProfilePress={() => setSettingsOpen(true)}
+      />
+
+      {last ? (
+        <Text style={styles.syncHint}>
+          Last sync {formatRelative(last.at)} · {syncLabel(last.result)}
+        </Text>
+      ) : (
+        <Text style={styles.syncHint}>No sync yet — tap Sync or open Settings</Text>
+      )}
+
+      {patient && !loadError ? (
+        <Glass tone="strong" padded>
+          <View style={styles.heroRow}>
+            <View style={styles.heroMain}>
+              <View style={styles.heroTitleRow}>
+                <Text style={styles.heroName} numberOfLines={2}>
+                  {patient.name}
+                </Text>
+                <SeverityChip
+                  severity={heroSeverity}
+                  pulse={!!isCritical}
+                  label={
+                    isCritical
+                      ? 'Escalate'
+                      : heroSeverity === 'warn'
+                        ? 'Escalating'
+                        : heroSeverity === 'watch'
+                          ? 'Watch'
+                          : 'Stable'
+                  }
+                />
+              </View>
+              <Text style={styles.heroMeta} numberOfLines={2}>
+                {patient.surgery_type ? `${patient.surgery_type} · ` : ''}
+                {totalCalls} {totalCalls === 1 ? 'call' : 'calls'} total · {callsToday} today
+              </Text>
+            </View>
+            {latestScore ? (
+              <View style={styles.heroRisk}>
+                <Text style={styles.heroRiskLabel}>Risk</Text>
+                <Text
+                  style={[
+                    styles.heroRiskNum,
+                    { color: severityMeta(heroSeverity).color },
+                  ]}
+                >
+                  {latestScore.deterioration.toFixed(2)}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </Glass>
+      ) : null}
 
       {loadingPatient && !patient ? (
         <Glass padded>
@@ -418,114 +479,40 @@ export default function PatientDashboard() {
         </View>
       </Glass>
 
-      {/* Vitals sync tile */}
-      <Glass padded>
-        <View style={styles.chartHeader}>
-          <Text style={styles.cardTitle}>Vitals sync</Text>
-          <Text style={styles.cardCaption}>Auto every 30s</Text>
-        </View>
-        {last ? (
-          <View style={{ gap: 4 }}>
-            <Text style={styles.body}>
-              Last sync {formatRelative(last.at)}
-            </Text>
-            <Text style={[styles.body, { color: syncResultColor(last.result) }]}>
-              {syncLabel(last.result)}
-              {last.acceptedTotal != null
-                ? ` — ${last.acceptedTotal} new sample${last.acceptedTotal === 1 ? '' : 's'} uploaded`
-                : ''}
-              {last.flaggedClockSkewTotal
-                ? ` (${last.flaggedClockSkewTotal} clock-skew)`
-                : ''}
-            </Text>
-            {last.message ? <Text style={styles.muted}>{last.message}</Text> : null}
-            {last.result === 'ok' && (last.acceptedTotal ?? 0) === 0 ? (
-              <Text style={styles.muted}>
-                "0 new" just means nothing arrived since the last sync. See Health Connect below
-                for what's currently in the store.
-              </Text>
-            ) : null}
-          </View>
-        ) : (
-          <Text style={styles.muted}>No sync has run yet.</Text>
-        )}
-
-        {diag ? (
-          <View style={styles.diagBox}>
-            <Text style={styles.label}>HEALTH CONNECT · LAST 24H</Text>
-            <View style={styles.diagRow}>
-              <Text style={styles.diagKey}>SDK</Text>
-              <Text style={styles.diagVal}>{diag.sdkStatus}</Text>
-            </View>
-            <View style={styles.diagRow}>
-              <Text style={styles.diagKey}>Granted</Text>
-              <Text style={styles.diagVal}>
-                {diag.grantedScopes.length} permission
-                {diag.grantedScopes.length === 1 ? '' : 's'}
-              </Text>
-            </View>
-            {Object.keys(diag.lastQueryCountsByKind).length > 0 ? (
-              <View style={styles.diagRow}>
-                <Text style={styles.diagKey}>Samples</Text>
-                <Text style={[styles.diagVal, { flexShrink: 1 }]}>
-                  {Object.entries(diag.lastQueryCountsByKind)
-                    .filter(([, n]) => n > 0)
-                    .map(([k, n]) => `${k}=${n}`)
-                    .join(', ') || 'nothing visible'}
-                </Text>
-              </View>
-            ) : null}
-            {isLikelyBridgeEmpty(last, diag) ? (
-              <View style={styles.diagHintBox}>
-                <Text style={styles.diagHintText}>
-                  Health Connect shows 0 samples in the last 24h. On Samsung, open Samsung
-                  Health → Settings → Health Connect and turn on the data types you want
-                  shared (Heart rate, Oxygen saturation, etc).
-                </Text>
-              </View>
-            ) : null}
-            <TouchableOpacity onPress={onOpenHealthSettings}>
-              <Text style={styles.linkInline}>Open Health Connect ↗</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        <View style={styles.btnRow}>
-          <Button
-            label="Sync now"
-            onPress={onSyncNow}
-            loading={syncing}
-            style={{ flex: 1 }}
-          />
-          <Button
-            label="Backfill 24h"
-            onPress={onBackfill}
-            loading={syncing}
-            variant="outline"
-            style={{ flex: 1 }}
-          />
-        </View>
-
-        <Button
-          label="Send synthetic test vitals"
-          onPress={onSendDemoVitals}
-          loading={demoSending}
-          variant="ghost"
-          fullWidth
-        />
-
-        <Text style={styles.muted}>
-          "Backfill 24h" resets the sync cursor and pulls everything from Health Connect for
-          the last day. "Send synthetic test vitals" injects fake samples for offline demos.
-        </Text>
-      </Glass>
-
-      <TouchableOpacity
-        onPress={() => router.push('/(main)/settings')}
-        style={styles.settingsLink}
+      <Modal
+        visible={settingsOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setSettingsOpen(false)}
       >
-        <Text style={styles.linkInline}>⚙  Settings</Text>
-      </TouchableOpacity>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.modalDismiss} onPress={() => setSettingsOpen(false)} />
+          <View
+            style={[
+              styles.settingsSheet,
+              {
+                paddingTop: insets.top + space.sm,
+                maxHeight: Dimensions.get('window').height * 0.92,
+              },
+            ]}
+          >
+            <View style={styles.sheetHandle} />
+            <SettingsPanel
+              onClose={() => setSettingsOpen(false)}
+              closeLabel="Done"
+              healthTools={{
+                last,
+                diag,
+                onBackfill,
+                onSendDemoVitals,
+                onOpenHealthSettings,
+                syncing,
+                demoSending,
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -569,12 +556,6 @@ function syncLabel(r: LastSyncStatus['result']): string {
   }
 }
 
-function syncResultColor(r: LastSyncStatus['result']): string {
-  if (r === 'ok') return palette.calm;
-  if (r === 'partial' || r === 'rate_limited' || r === 'dev_unsigned') return palette.watch;
-  return palette.crit;
-}
-
 function formatRelative(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return iso;
@@ -586,50 +567,87 @@ function formatRelative(iso: string): string {
   return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function isLikelyBridgeEmpty(
-  last: LastSyncStatus | null,
-  diag: HealthDiagnostics,
-): boolean {
-  if (!last || last.result !== 'ok') return false;
-  if ((last.acceptedTotal ?? 0) > 0) return false;
-  if (diag.grantedScopes.length === 0) return false;
-  const total = Object.values(diag.lastQueryCountsByKind).reduce((a, b) => a + b, 0);
-  return total === 0;
-}
-
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  headerRow: {
+  syncHint: {
+    fontSize: 11,
+    color: palette.textDim,
+    marginTop: -space.sm,
+    marginBottom: space.xs,
+  },
+
+  modalRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(2,6,15,0.55)',
+  },
+  modalDismiss: { flex: 1 },
+  settingsSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    backgroundColor: palette.canvasRise,
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: palette.glassBorder,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.lg,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: palette.textFaint,
+    marginBottom: space.md,
+    opacity: 0.85,
+  },
+
+  heroRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: space.md,
   },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: palette.accent500,
-    borderWidth: 1,
-    borderColor: palette.accent600,
+  heroMain: { flex: 1, minWidth: 0 },
+  heroTitleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: space.sm,
+    marginBottom: space.xs,
   },
-  avatarText: { color: '#F8FAFF', fontWeight: '700', fontSize: 18 },
-  kicker: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-    color: palette.accent400,
-    marginBottom: 2,
-  },
-  h1: {
-    fontSize: font.h1.size,
+  heroName: {
+    fontSize: 22,
     fontWeight: '700',
     color: palette.text,
-    letterSpacing: font.h1.letterSpacing,
+    letterSpacing: -0.3,
+    flexShrink: 1,
   },
-  subtle: { fontSize: 13, color: palette.textMuted, marginTop: 2 },
+  heroMeta: {
+    fontSize: 13,
+    color: palette.textMuted,
+    lineHeight: 18,
+  },
+  heroRisk: {
+    alignItems: 'flex-end',
+    paddingTop: 2,
+  },
+  heroRiskLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: palette.textDim,
+    marginBottom: 2,
+  },
+  heroRiskNum: {
+    fontSize: 26,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
 
   label: {
     fontSize: 10,
@@ -745,38 +763,4 @@ const styles = StyleSheet.create({
 
   body: { fontSize: 14, color: palette.text },
   muted: { fontSize: 12, color: palette.textDim, lineHeight: 17 },
-
-  diagBox: {
-    marginTop: space.md,
-    padding: space.md,
-    backgroundColor: 'rgba(10,15,31,0.6)',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: palette.glassBorder,
-    gap: space.xs,
-  },
-  diagRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
-  diagKey: { fontSize: 12, color: palette.textDim, fontWeight: '600' },
-  diagVal: { fontSize: 12, color: palette.text, textAlign: 'right' },
-  diagHintBox: {
-    marginTop: space.sm,
-    padding: space.sm,
-    backgroundColor: palette.watchBg,
-    borderWidth: 1,
-    borderColor: palette.watchBorder,
-    borderRadius: radius.sm,
-  },
-  diagHintText: { fontSize: 12, color: palette.watchText, lineHeight: 17 },
-
-  btnRow: {
-    flexDirection: 'row',
-    gap: space.sm,
-    marginTop: space.md,
-  },
-
-  settingsLink: {
-    alignSelf: 'center',
-    paddingVertical: space.md,
-    paddingHorizontal: space.xl,
-  },
 });
