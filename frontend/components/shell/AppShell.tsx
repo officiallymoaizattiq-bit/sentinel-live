@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { Critical911Banner } from "@/components/admin/Critical911Banner";
 
 type NavItem = {
   href: string;
@@ -222,13 +223,17 @@ export function AppShell({
   title?: string;
   subtitle?: string;
 }) {
+  const pathname = usePathname();
   return (
-    <div className="mx-auto flex w-full max-w-[1400px] gap-6 p-4 lg:p-6">
-      <Sidebar />
-      <div className="min-w-0 flex-1">
-        <Topbar title={title} subtitle={subtitle} />
-        <main className="animate-float-in pb-10">{children}</main>
+    <>
+      {pathname?.startsWith("/admin") && <Critical911Banner />}
+      <div className="mx-auto flex w-full max-w-[1400px] gap-6 p-4 lg:p-6">
+        <Sidebar />
+        <div className="min-w-0 flex-1">
+          <Topbar title={title} subtitle={subtitle} />
+          <main className="animate-float-in pb-10">{children}</main>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

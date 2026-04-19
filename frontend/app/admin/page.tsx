@@ -10,6 +10,7 @@ type CallSummary = {
   lastDeterioration: number | null;
   lastAction: string | null;
   lastCalledAt: string | null;
+  lastOutcome: "fine" | "schedule_visit" | "escalated_911" | null;
 };
 
 const EMPTY: CallSummary = {
@@ -17,6 +18,7 @@ const EMPTY: CallSummary = {
   lastDeterioration: null,
   lastAction: null,
   lastCalledAt: null,
+  lastOutcome: null,
 };
 
 export default async function Dashboard() {
@@ -40,6 +42,7 @@ export default async function Dashboard() {
             lastDeterioration: last?.score?.deterioration ?? null,
             lastAction: last?.score?.recommended_action ?? null,
             lastCalledAt: last?.called_at ?? null,
+            lastOutcome: last?.outcome_label ?? null,
           },
         ] as const;
       } catch {
