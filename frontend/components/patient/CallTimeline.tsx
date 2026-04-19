@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { Glass } from "@/components/ui/Glass";
 import type { CallRecord } from "@/lib/api";
+
+const OUTCOME_COLOR: Record<string, string> = {
+  fine: "#34D399",
+  schedule_visit: "#FBBF24",
+  escalated_911: "#F43F5E",
+};
 import {
   actionToSeverity,
   formatRelative,
@@ -90,6 +96,16 @@ export function CallTimeline({ calls }: { calls: CallRecord[] }) {
                     boxShadow: `0 0 ${isActive ? 14 : 8}px ${meta.glow}`,
                   }}
                 />
+                {c.outcome_label && OUTCOME_COLOR[c.outcome_label] && (
+                  <span
+                    className="absolute bottom-0 right-0 rounded-full border border-slate-900"
+                    style={{
+                      width: 6,
+                      height: 6,
+                      background: OUTCOME_COLOR[c.outcome_label],
+                    }}
+                  />
+                )}
               </button>
             );
           })}

@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     admin_passkey: str = "a"
     patient_passkey: str = "b"
     session_secret: str = "dev-only-session-NOT-SECURE"
+    enable_call_summary: bool = True
+    elevenlabs_webhook_secret: str = ""
 
 
 @lru_cache

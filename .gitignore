@@ -14,3 +14,7 @@ dist/
 
 # Frontend env
 .env.local
+.env.*.local
+
+# TS build info
+*.tsbuildinfo

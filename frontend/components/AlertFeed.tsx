@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Alert } from "@/lib/api";
 import { useEventStream } from "@/lib/hooks/useEventStream";
+import { AckButton } from "@/components/admin/AckButton";
 
 type Props = { initial?: Alert[] };
 
@@ -37,10 +38,17 @@ export function AlertFeed({ initial = [] }: Props) {
         return [next, ...prev].slice(0, 50);
       });
     }
+    if (e.type === "alert_ack") {
+      setAlerts((prev) => prev.filter((a) => a.id !== e.alert_id));
+    }
   });
 
   const items = useMemo(
-    () => alerts.slice().sort((a, b) => b.sent_at.localeCompare(a.sent_at)),
+    () =>
+      alerts
+        .filter((a) => !a.acknowledged)
+        .slice()
+        .sort((a, b) => b.sent_at.localeCompare(a.sent_at)),
     [alerts]
   );
 
@@ -63,7 +71,15 @@ export function AlertFeed({ initial = [] }: Props) {
             : "border-white/10 bg-white/5";
           return (
             <li key={a.id} className={"rounded-lg border p-3 text-xs " + cls}>
-              <div className="font-mono">{a.severity}</div>
+              <div className="flex items-center justify-between">
+                <div className="font-mono">{a.severity}</div>
+                <AckButton
+                  alertId={a.id}
+                  onDone={() =>
+                    setAlerts((prev) => prev.filter((x) => x.id !== a.id))
+                  }
+                />
+              </div>
               <div className="text-slate-400">
                 {new Date(a.sent_at).toLocaleTimeString()}
                 {a.channel.length ? ` · ${a.channel.join(", ")}` : ""}

@@ -10,6 +10,7 @@ type CallSummary = {
   lastDeterioration: number | null;
   lastAction: string | null;
   lastCalledAt: string | null;
+  lastOutcome: "fine" | "schedule_visit" | "escalated_911" | null;
 };
 
 const EMPTY: CallSummary = {
@@ -17,6 +18,7 @@ const EMPTY: CallSummary = {
   lastDeterioration: null,
   lastAction: null,
   lastCalledAt: null,
+  lastOutcome: null,
 };
 
 export default async function Dashboard() {
@@ -24,6 +26,7 @@ export default async function Dashboard() {
     api.patients().catch(() => []),
     api.alerts().catch(() => []),
   ]);
+  const { count: initialOpenAlertCount } = await api.openAlertCount().catch(() => ({ count: 0 }));
 
   const summaryEntries = await Promise.all(
     patients.map(async (p): Promise<readonly [string, CallSummary]> => {
@@ -40,6 +43,7 @@ export default async function Dashboard() {
             lastDeterioration: last?.score?.deterioration ?? null,
             lastAction: last?.score?.recommended_action ?? null,
             lastCalledAt: last?.called_at ?? null,
+            lastOutcome: last?.outcome_label ?? null,
           },
         ] as const;
       } catch {
@@ -63,6 +67,7 @@ export default async function Dashboard() {
         initialPatients={patients}
         initialAlerts={alerts}
         initialAvgDeterioration={avgDeterioration}
+        initialOpenAlertCount={initialOpenAlertCount}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
