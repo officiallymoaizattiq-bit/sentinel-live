@@ -27,5 +27,17 @@ mobile/.env.local
 mobile/web-build/
 .env.*.local
 
+# Firebase credentials.
+# - google-services.json holds Android FCM sender id + API key (public-facing
+#   identifiers, but kept out of the public repo by convention).
+# - GoogleService-Info.plist is the iOS equivalent.
+# - service-account*.json is Firebase Admin SDK / FCM V1 server creds (TRULY
+#   secret — uploaded to EAS via `eas credentials` and not used at runtime
+#   on disk, but we ignore the pattern in case it lands in the repo).
+mobile/google-services.json
+mobile/GoogleService-Info.plist
+mobile/service-account*.json
+mobile/*-firebase-adminsdk-*.json
+
 # TS build info
 *.tsbuildinfo

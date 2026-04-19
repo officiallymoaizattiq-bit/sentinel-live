@@ -20,7 +20,6 @@ import { useEventStream, type StreamEvent } from '../../src/realtime/useEventStr
 import {
   dismissIncomingCallNotification,
   ensureNotificationPermission,
-  showIncomingCallNotification,
 } from '../../src/notifications/incoming';
 import { sendDemoVitals } from '../../src/sync/demo';
 import { readLastSyncStatus, runSyncOnce, type LastSyncStatus } from '../../src/sync/task';
@@ -159,12 +158,14 @@ export default function PatientDashboard() {
       if ('patient_id' in e && e.patient_id !== c.patientId) return;
 
       if (e.type === 'pending_call') {
+        // We no longer fire showIncomingCallNotification() here — the
+        // backend's /calls/trigger endpoint emits an Expo push (see
+        // backend/sentinel/push.py) that's responsible for ringing the
+        // device, including when the app is killed or the screen is off
+        // (which SSE can't reach because the JS thread is suspended).
+        // SSE is still useful for the in-app "incoming call" toast on the
+        // dashboard, which is what setIncoming drives.
         setIncoming({ at: e.at, mode: e.mode });
-        showIncomingCallNotification({
-          patientId: c.patientId,
-          mode: e.mode,
-          at: e.at,
-        }).catch(() => {});
       } else if (e.type === 'call_scored') {
         loadCalls(c);
       }

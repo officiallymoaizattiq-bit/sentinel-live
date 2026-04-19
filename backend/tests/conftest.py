@@ -30,6 +30,7 @@ async def mongo(monkeypatch):
         "sentinel.finalize",
         "sentinel.watchdog",
         "sentinel.webhooks",
+        "sentinel.push",
     ]
     for name in module_names:
         try:

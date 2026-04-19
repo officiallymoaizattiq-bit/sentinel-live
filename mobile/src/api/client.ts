@@ -80,16 +80,24 @@ async function readErrorCode(res: Response): Promise<string | undefined> {
   return json.error;
 }
 
-async function fetchJson<T>(
+async function request<T>(
   path: string,
   creds: Credentials | null,
+  init: { method?: string; body?: unknown } = {},
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (creds) headers.Authorization = `Bearer ${creds.deviceToken}`;
+  const method = init.method ?? 'GET';
+  const hasBody = init.body !== undefined;
+  if (hasBody) headers['Content-Type'] = 'application/json';
 
   let res: Response;
   try {
-    res = await fetch(`${config.apiUrl}${path}`, { method: 'GET', headers });
+    res = await fetch(`${config.apiUrl}${path}`, {
+      method,
+      headers,
+      body: hasBody ? JSON.stringify(init.body) : undefined,
+    });
   } catch (e) {
     throw new ApiCallError({
       kind: 'network',
@@ -111,8 +119,22 @@ async function fetchJson<T>(
     throw new ApiCallError({ kind: 'http', status: res.status, message: text });
   }
 
-  return (await res.json()) as T;
+  // 204 No Content / empty body — return undefined-as-T rather than failing
+  // JSON.parse on the empty string.
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
+
+const fetchJson = <T,>(path: string, creds: Credentials | null) =>
+  request<T>(path, creds);
+
+export type DevicePushTokenBody = {
+  token: string;
+  platform: 'ios' | 'android';
+  /** "expo" for ExponentPushToken[...], "fcm"/"apns" for raw native tokens. */
+  provider: 'expo' | 'fcm' | 'apns';
+};
 
 export const api = {
   // GET /api/patients returns the full list. Mobile only needs its own patient,
@@ -126,4 +148,9 @@ export const api = {
   getCalls: (creds: Credentials, pid: string) =>
     fetchJson<CallRecord[]>(`/api/patients/${pid}/calls`, creds),
   getAlerts: (creds: Credentials) => fetchJson<Alert[]>('/api/alerts', creds),
+  registerPushToken: (creds: Credentials, body: DevicePushTokenBody) =>
+    request<{ ok: true }>('/api/devices/push-token', creds, {
+      method: 'POST',
+      body,
+    }),
 };
