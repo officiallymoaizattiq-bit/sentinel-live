@@ -36,6 +36,8 @@ def create_app(*, start_scheduler: bool = True) -> FastAPI:
     )
     app.include_router(router)
     app.include_router(auth_router)
+    from sentinel import webhooks as webhooks_mod
+    app.include_router(webhooks_mod.router)
     return app
 
 
