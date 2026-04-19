@@ -208,6 +208,27 @@ async def finalize_call(
         drift=drift,
         llm=GeminiLLM(),
     )
+
+    # Trigger the summary + escalation pipeline. Without this, the
+    # scheduler's auto_finalize path (EL widget calls that never hit the
+    # post-call webhook) never writes summary_patient / summary_nurse and
+    # never publishes `call_completed`, so dashboards stay on
+    # "Generating summary…" indefinitely. sentinel.finalize.finalize_call
+    # is idempotent: it reuses the existing score and short-circuits when
+    # `ended_at` is already set.
+    try:
+        from sentinel.finalize import finalize_call as finalize_with_summary
+        flat_transcript = "\n".join(
+            f"{t.role}: {t.text}" for t in transcript_turns if t.text
+        )
+        await finalize_with_summary(
+            conversation_id=conversation_id,
+            transcript=flat_transcript,
+            end_reason="agent_signal",
+        )
+    except Exception:
+        log.exception("summary finalize failed for %s", conversation_id)
+
     return new_id
 
 

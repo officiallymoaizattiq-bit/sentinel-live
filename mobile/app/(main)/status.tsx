@@ -147,9 +147,12 @@ export default function PatientDashboard() {
 
       if (e.type === 'pending_call') {
         setIncoming({ at: e.at, mode: e.mode });
-      } else if (e.type === 'call_scored') {
-        // Server has finalised the call. Anything ringing/posted on the
-        // lock screen is stale — clear it before re-rendering the feed.
+      } else if (e.type === 'call_scored' || e.type === 'call_completed') {
+        // `call_scored` lands first (score computed, no summary yet);
+        // `call_completed` lands after Gemini writes summary_patient /
+        // summary_nurse. Both require a calls-refetch so the dashboard shows
+        // the freshest state — without the call_completed branch the AI
+        // summary card stays on "Generating summary…" forever.
         setIncoming(null);
         dismissIncomingCallNotification().catch(() => {});
         loadCalls(c);
