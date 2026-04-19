@@ -288,25 +288,70 @@ async def trigger_call(body: TriggerCallBody):
     """Admin 'Call Now': dial the patient (native EL+Twilio) OR if Twilio isn't
     configured, emit a `pending_call` event so the patient's browser tab can
     auto-start the Convai widget.
+
+    Also fans out an Expo push to every paired mobile device for the
+    patient. The push is what wakes a backgrounded/screen-off phone — SSE
+    can't reach a paused JS thread. See sentinel/push.py.
     """
     from sentinel.call_handler import place_call
     from sentinel.config import get_settings
+    from sentinel import push
 
     s = get_settings()
     has_twilio = bool(s.twilio_account_sid.startswith("AC")) and bool(s.twilio_from_number)
+    mode = "phone" if has_twilio else "widget"
+    at_iso = datetime.now(tz=timezone.utc).isoformat()
 
     event_bus.publish({
         "type": "pending_call",
         "patient_id": body.patient_id,
-        "mode": "phone" if has_twilio else "widget",
-        "at": datetime.now(tz=timezone.utc).isoformat(),
+        "mode": mode,
+        "at": at_iso,
     })
+
+    pushed = await push.send_incoming_call(
+        patient_id=body.patient_id, mode=mode, at_iso=at_iso,
+    )
 
     try:
         call_id = await place_call(body.patient_id)
     except LookupError:
         raise HTTPException(404, "patient not found")
-    return {"call_id": call_id, "mode": "phone" if has_twilio else "widget"}
+    return {"call_id": call_id, "mode": mode, "pushes_sent": pushed}
+
+
+# ---------------------------------------------------------------------------
+# Push token registration (mobile)
+# ---------------------------------------------------------------------------
+
+
+class DevicePushTokenBody(_BM):
+    token: str
+    platform: str  # "ios" | "android"
+    provider: str = "expo"  # "expo" today; reserved for raw fcm/apns later
+
+
+@router.post("/devices/push-token")
+async def devices_push_token(
+    body: DevicePushTokenBody,
+    token_payload: dict = Depends(require_device_token),
+):
+    """Mobile registers its Expo push token here so /calls/trigger can ring
+    the device when the app is backgrounded or killed. Idempotent — the
+    mobile client calls this on every launch.
+    """
+    from sentinel import push
+
+    try:
+        await push.register_push_token(
+            device_id=token_payload["sub"],
+            token=body.token,
+            provider=body.provider,
+            platform=body.platform,
+        )
+    except ValueError as e:
+        raise HTTPException(400, {"error": "invalid_token", "message": str(e)})
+    return {"ok": True}
 
 
 class FinalizeBody(_BM):

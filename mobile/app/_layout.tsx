@@ -2,12 +2,16 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { loadCredentials } from '../src/auth/storage';
+import { loadCredentials, type Credentials } from '../src/auth/storage';
 import {
   configureIncomingCallNotifications,
   dismissIncomingCallNotification,
   payloadFromResponse,
 } from '../src/notifications/incoming';
+import {
+  registerPushToken,
+  subscribeToPushTokenRefresh,
+} from '../src/notifications/pushToken';
 import { registerBackgroundSync } from '../src/sync/task';
 
 export default function RootLayout() {
@@ -15,6 +19,7 @@ export default function RootLayout() {
   const segments = useSegments();
   const [ready, setReady] = useState(false);
   const [paired, setPaired] = useState(false);
+  const [creds, setCreds] = useState<Credentials | null>(null);
   const lastChecked = useRef(0);
 
   // Re-read credentials from SecureStore. We keep this debounced (250ms)
@@ -24,11 +29,12 @@ export default function RootLayout() {
     const now = Date.now();
     if (!force && now - lastChecked.current < 250) return;
     lastChecked.current = now;
-    const creds = await loadCredentials();
+    const c = await loadCredentials();
+    setCreds(c);
     setPaired((prev) => {
-      if (prev !== !!creds) {
-        if (creds) registerBackgroundSync().catch(() => {});
-        return !!creds;
+      if (prev !== !!c) {
+        if (c) registerBackgroundSync().catch(() => {});
+        return !!c;
       }
       return prev;
     });
@@ -80,6 +86,36 @@ export default function RootLayout() {
   // before the channel exists, and Android will silently drop it.
   useEffect(() => {
     configureIncomingCallNotifications().catch(() => {});
+  }, []);
+
+  // Push token registration. Runs once per (re-)pairing. The actual delivery
+  // path is: backend /api/calls/trigger -> Expo Push API -> FCM/APNS ->
+  // device. Without this the killed-app / screen-off case can't ring.
+  useEffect(() => {
+    if (!ready || !creds) return;
+    registerPushToken(creds).catch(() => {});
+    const unsub = subscribeToPushTokenRefresh(creds);
+    return unsub;
+  }, [ready, creds]);
+
+  // Foreground push receiver. We don't manually display anything — the
+  // push body itself already specifies channelId/sound/vibrate/priority, and
+  // setNotificationHandler (configured in incoming.ts) returns
+  // shouldShowAlert/shouldPlaySound: true with priority: MAX so Expo
+  // surfaces the heads-up and rings the channel automatically. Re-firing
+  // showIncomingCallNotification() here would double up the banner.
+  //
+  // Background/killed delivery is rendered by the OS directly from the push
+  // payload — same channel, same sound. Tap routing goes through the
+  // NotificationResponseReceived listener below.
+  //
+  // We keep the listener wired so we have a single place to drop in
+  // analytics or call-state diagnostics later.
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener(() => {
+      // Intentionally empty — handled by setNotificationHandler + push payload.
+    });
+    return () => sub.remove();
   }, []);
 
   // Tap-to-answer routing. When the user hits Answer (or just taps the
