@@ -47,6 +47,7 @@ export function PatientLiveView({
   const [incoming, setIncoming] = useState<{ at: string; mode: string } | null>(null);
   const [widgetOpen, setWidgetOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [wrappingUp, setWrappingUp] = useState(false);
   const [latestCall, setLatestCall] = useState<Call | null>(
     initialCalls?.[initialCalls.length - 1] ?? null
   );
@@ -91,12 +92,14 @@ export function PatientLiveView({
   }, [widgetOpen, agentId]);
 
   useEffect(() => {
-    if (!widgetOpen) { setSecondsLeft(null); return; }
+    if (!widgetOpen) { setSecondsLeft(null); setWrappingUp(false); return; }
     const startedAt = Date.now();
     const MIN_MS = 40_000;
+    const WRAP_UP_MS = 55_000;
     const MAX_MS = 60_000;
     let done = false;
     setSecondsLeft(60);
+    setWrappingUp(false);
 
     const finalize = async (reason: string) => {
       if (done) return;
@@ -139,10 +142,12 @@ export function PatientLiveView({
       document.addEventListener(t, onEvt as EventListener);
     });
 
+    const wrapNudge = window.setTimeout(() => setWrappingUp(true), WRAP_UP_MS);
     const hardCap = window.setTimeout(() => finalize("60s-cap"), MAX_MS);
 
     return () => {
       window.clearInterval(tick);
+      window.clearTimeout(wrapNudge);
       window.clearTimeout(hardCap);
       listenTypes.forEach((t) => {
         window.removeEventListener(t, onEvt as EventListener);
@@ -299,6 +304,17 @@ export function PatientLiveView({
                   </button>
                 </div>
               </div>
+              {wrappingUp ? (
+                <div className="mb-3 rounded-xl border border-accent-400/40 bg-accent-500/10 p-3">
+                  <div className="text-sm font-semibold text-slate-100">
+                    Sending your answers to your care team…
+                  </div>
+                  <div className="mt-1 text-xs text-slate-300/90">
+                    A nurse will follow up if anything needs attention. You can
+                    hang up now.
+                  </div>
+                </div>
+              ) : null}
               <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
                 Tap the button below to allow the microphone — browsers require a
                 direct tap (starting the call from code alone will not show the

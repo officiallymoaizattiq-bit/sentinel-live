@@ -6,7 +6,7 @@ Four fields matter:
 
 1. **System prompt** — the long persona + rubric block below
 2. **First message** — the opener the agent speaks as the call connects
-3. **Max duration** — `75` seconds (gives the agent room to wrap cleanly inside the 60-second budget)
+3. **Max duration** — `65` seconds (client enforces a hard 60s cap, so anything past that is trimmed server-side; keep this slightly above to avoid a race)
 4. **End call tool** — on (agent is allowed to hang up when wrap-up is spoken)
 
 ---

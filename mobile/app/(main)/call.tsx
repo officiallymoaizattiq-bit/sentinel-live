@@ -143,6 +143,16 @@ function CallSurface() {
     dismissIncomingCallNotification().catch(() => {});
   }, []);
 
+  // Call duration guardrails. Voice agent prompt (docs/elevenlabs-agent.md)
+  // asks the agent to wrap up between 50–55s, but we can't fully trust an LLM
+  // to self-end. Client enforces both a wrap-up nudge and a hard cap:
+  //   - WRAP_UP_AT_MS: show a "Sending your answers to your care team…"
+  //     banner so the user knows the call is about to close.
+  //   - HARD_END_AT_MS: tear down the EL session if the agent hasn't already.
+  const WRAP_UP_AT_MS = 55_000;
+  const HARD_END_AT_MS = 60_000;
+  const [wrappingUp, setWrappingUp] = useState(false);
+
   const liveRef = useRef(live);
   liveRef.current = live;
 
@@ -183,6 +193,34 @@ function CallSurface() {
       dismissIncomingCallNotification().catch(() => {});
     };
   }, []);
+
+  // Wrap-up nudge + hard cap. Anchored to callStartMs so it doesn't fire
+  // during the "Connecting…" phase. Pair of timers is cancelled on unmount.
+  useEffect(() => {
+    if (callStartMs == null) return;
+    const now = Date.now();
+    const wrapDelay = Math.max(0, WRAP_UP_AT_MS - (now - callStartMs));
+    const endDelay = Math.max(0, HARD_END_AT_MS - (now - callStartMs));
+    const wrapTimer = setTimeout(() => setWrappingUp(true), wrapDelay);
+    const endTimer = setTimeout(() => {
+      setWrappingUp(true);
+      try {
+        endSession?.();
+      } catch {
+        // best-effort — the useEffect watching `status` will still run.
+      }
+      if (!terminalRef.current) {
+        terminalRef.current = true;
+        drainAndPost(creds).catch(() => {});
+        dismissIncomingCallNotification().catch(() => {});
+        setTimeout(() => router.back(), 1200);
+      }
+    }, endDelay);
+    return () => {
+      clearTimeout(wrapTimer);
+      clearTimeout(endTimer);
+    };
+  }, [callStartMs, endSession, creds, drainAndPost, router]);
 
   const onEndPress = async () => {
     try {
@@ -252,6 +290,14 @@ function CallSurface() {
       </View>
 
       <View style={styles.middleRegion}>
+        {wrappingUp ? (
+          <View style={styles.wrapBanner}>
+            <Text style={styles.wrapTitle}>Sending your answers to your care team…</Text>
+            <Text style={styles.wrapBody}>
+              A nurse will follow up if anything needs attention. You can hang up now.
+            </Text>
+          </View>
+        ) : null}
         <LiveVitalsTile
           hrBpm={live.latestHr?.bpm ?? null}
           hrTIso={live.latestHr?.tIso ?? null}
@@ -704,6 +750,17 @@ const styles = StyleSheet.create({
     borderColor: palette.calmBorder,
   },
   batchInfo: { color: palette.calmText, fontSize: 13, textAlign: 'center' },
+
+  wrapBanner: {
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.glassBgAccent,
+    borderWidth: 1,
+    borderColor: 'rgba(96,165,250,0.35)',
+    gap: 4,
+  },
+  wrapTitle: { color: palette.text, fontSize: 14, fontWeight: '600' },
+  wrapBody: { color: palette.textMuted, fontSize: 12, lineHeight: 17 },
 
   controlsColumn: {
     gap: space.md,

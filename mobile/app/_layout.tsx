@@ -159,8 +159,13 @@ export default function RootLayout() {
     const handleResponse = (response: Notifications.NotificationResponse) => {
       const parsed = payloadFromResponse(response);
       if (!parsed) return;
+      // Always clear the incoming-call notification, regardless of whether
+      // the user tapped Answer, Decline, or the body. The OS keeps the
+      // heads-up pinned until we explicitly dismiss it (action buttons do
+      // NOT auto-dismiss), so without this the banner lingers behind the
+      // call screen and stays visible after the call ends.
+      dismissIncomingCallNotification().catch(() => {});
       if (parsed.action === 'decline') {
-        dismissIncomingCallNotification().catch(() => {});
         return;
       }
       router.push({
