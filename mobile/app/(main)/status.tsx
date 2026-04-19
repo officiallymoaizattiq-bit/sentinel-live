@@ -1,34 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ApiCallError, api, type CallRecord, type Patient } from '../../src/api/client';
 import {
   clearCredentials,
-  clearSyncCursor,
   loadCredentials,
   type Credentials,
 } from '../../src/auth/storage';
-import { getHealthAdapter, type HealthDiagnostics } from '../../src/health';
 import { TrajectoryChart, type TrajectoryPoint } from '../../src/components/TrajectoryChart';
 import { useEventStream, type StreamEvent } from '../../src/realtime/useEventStream';
 import {
   dismissIncomingCallNotification,
   ensureNotificationPermission,
 } from '../../src/notifications/incoming';
-import { sendDemoVitals } from '../../src/sync/demo';
 import { readLastSyncStatus, runSyncOnce, type LastSyncStatus } from '../../src/sync/task';
 import { DashboardTopBar } from '../../src/components/DashboardTopBar';
-import { SettingsPanel } from '../../src/components/SettingsPanel';
 import {
   Button,
   Glass,
@@ -44,15 +36,13 @@ import {
 
 // Foreground auto-sync interval. expo-background-fetch's 15-min minimum is
 // way too coarse for a live demo, and iOS may never actually fire it. While
-// the dashboard is open we just poll every 30s — cheap, predictable, and
-// matches what a clinician demoing the app expects to see.
+// the dashboard is open we just poll every 30s.
 const FOREGROUND_SYNC_INTERVAL_MS = 30_000;
 
 type IncomingCall = { at: string; mode: 'phone' | 'widget' };
 
 export default function PatientDashboard() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [creds, setCreds] = useState<Credentials | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -61,10 +51,7 @@ export default function PatientDashboard() {
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
   const [last, setLast] = useState<LastSyncStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [demoSending, setDemoSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [diag, setDiag] = useState<HealthDiagnostics | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const credsRef = useRef<Credentials | null>(null);
   credsRef.current = creds;
@@ -138,12 +125,6 @@ export default function PatientDashboard() {
       if (cancelled) return;
       const s = await readLastSyncStatus();
       if (!cancelled) setLast(s);
-      try {
-        const d = await getHealthAdapter().diagnose();
-        if (!cancelled) setDiag(d);
-      } catch {
-        // ignore
-      }
     };
     tick();
     const id = setInterval(tick, FOREGROUND_SYNC_INTERVAL_MS);
@@ -165,13 +146,6 @@ export default function PatientDashboard() {
       if ('patient_id' in e && e.patient_id !== c.patientId) return;
 
       if (e.type === 'pending_call') {
-        // We no longer fire showIncomingCallNotification() here — the
-        // backend's /calls/trigger endpoint emits an Expo push (see
-        // backend/sentinel/push.py) that's responsible for ringing the
-        // device, including when the app is killed or the screen is off
-        // (which SSE can't reach because the JS thread is suspended).
-        // SSE is still useful for the in-app "incoming call" toast on the
-        // dashboard, which is what setIncoming drives.
         setIncoming({ at: e.at, mode: e.mode });
       } else if (e.type === 'call_scored') {
         loadCalls(c);
@@ -241,58 +215,6 @@ export default function PatientDashboard() {
     }
   };
 
-  const onBackfill = async () => {
-    setSyncing(true);
-    try {
-      await clearSyncCursor();
-      await runSyncOnce().catch(() => {});
-      const s = await readLastSyncStatus();
-      setLast(s);
-      try {
-        const d = await getHealthAdapter().diagnose();
-        setDiag(d);
-      } catch {
-        // ignore
-      }
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const onOpenHealthSettings = () => {
-    try {
-      getHealthAdapter().openSettings();
-    } catch {
-      // no-op
-    }
-  };
-
-  const onSendDemoVitals = async () => {
-    if (!creds || demoSending) return;
-    setDemoSending(true);
-    try {
-      const result = await sendDemoVitals(creds);
-      const now = new Date().toISOString();
-      if (result.ok) {
-        setLast({
-          at: now,
-          result: 'ok',
-          acceptedTotal: result.accepted,
-          flaggedClockSkewTotal: 0,
-          message: 'demo vitals',
-        });
-      } else {
-        setLast({
-          at: now,
-          result: 'error',
-          message: `demo vitals failed: ${result.message}`,
-        });
-      }
-    } finally {
-      setDemoSending(false);
-    }
-  };
-
   if (!creds) {
     return (
       <Screen scroll={false} padded={false}>
@@ -318,16 +240,15 @@ export default function PatientDashboard() {
         onSyncPress={onSyncNow}
         syncing={syncing}
         profileInitials={initials}
-        onProfilePress={() => setSettingsOpen(true)}
       />
 
-      {last ? (
-        <Text style={styles.syncHint}>
-          Last sync {formatRelative(last.at)} · {syncLabel(last.result)}
-        </Text>
-      ) : (
-        <Text style={styles.syncHint}>No sync yet — tap Sync or open Settings</Text>
-      )}
+      <KpiStrip
+        connected={connected}
+        lastSync={last}
+        total={totalCalls}
+        today={callsToday}
+        severity={severity}
+      />
 
       {patient && !loadError ? (
         <Glass tone="strong" padded>
@@ -340,15 +261,7 @@ export default function PatientDashboard() {
                 <SeverityChip
                   severity={heroSeverity}
                   pulse={!!isCritical}
-                  label={
-                    isCritical
-                      ? 'Escalate'
-                      : heroSeverity === 'warn'
-                        ? 'Escalating'
-                        : heroSeverity === 'watch'
-                          ? 'Watch'
-                          : 'Stable'
-                  }
+                  label={severityLabel(heroSeverity, isCritical)}
                 />
               </View>
               <Text style={styles.heroMeta} numberOfLines={2}>
@@ -358,7 +271,7 @@ export default function PatientDashboard() {
             </View>
             {latestScore ? (
               <View style={styles.heroRisk}>
-                <Text style={styles.heroRiskLabel}>Risk</Text>
+                <Text style={styles.heroRiskLabel}>RISK</Text>
                 <Text
                   style={[
                     styles.heroRiskNum,
@@ -390,7 +303,6 @@ export default function PatientDashboard() {
         </Glass>
       ) : null}
 
-      {/* Incoming call banner — green accented to match the web's answer affordance */}
       {incoming && (
         <Glass tone="calm" padded>
           <View style={styles.incomingHeader}>
@@ -407,22 +319,13 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
-      {/* Hero status tile — mirrors the web's "Latest check-in" hero */}
       {latestScore && severity && (
         <Glass tone={isCritical ? 'crit' : 'default'} padded>
           <View style={styles.latestHeader}>
             <Text style={styles.label}>LATEST CHECK-IN</Text>
             <SeverityChip
               severity={severity}
-              label={
-                isCritical
-                  ? 'Escalate'
-                  : severity === 'warn'
-                    ? 'Escalating'
-                    : severity === 'watch'
-                      ? 'Watch'
-                      : 'Stable'
-              }
+              label={severityLabel(severity, isCritical)}
             />
           </View>
           <Text
@@ -432,7 +335,7 @@ export default function PatientDashboard() {
           </Text>
           <View style={styles.scoreRow}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.scoreLabel}>Deterioration</Text>
+              <Text style={styles.scoreLabel}>DETERIORATION</Text>
               <View style={styles.scoreValueRow}>
                 <Text
                   style={[
@@ -465,7 +368,6 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
-      {/* Trajectory */}
       <Glass padded>
         <View style={styles.chartHeader}>
           <Text style={styles.cardTitle}>Trajectory</Text>
@@ -478,42 +380,82 @@ export default function PatientDashboard() {
           <LegendItem color={palette.crit} label="0.6+ Escalate" />
         </View>
       </Glass>
-
-      <Modal
-        visible={settingsOpen}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setSettingsOpen(false)}
-      >
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.modalDismiss} onPress={() => setSettingsOpen(false)} />
-          <View
-            style={[
-              styles.settingsSheet,
-              {
-                paddingTop: insets.top + space.sm,
-                maxHeight: Dimensions.get('window').height * 0.92,
-              },
-            ]}
-          >
-            <View style={styles.sheetHandle} />
-            <SettingsPanel
-              onClose={() => setSettingsOpen(false)}
-              closeLabel="Done"
-              healthTools={{
-                last,
-                diag,
-                onBackfill,
-                onSendDemoVitals,
-                onOpenHealthSettings,
-                syncing,
-                demoSending,
-              }}
-            />
-          </View>
-        </View>
-      </Modal>
     </Screen>
+  );
+}
+
+function severityLabel(s: Severity, critical?: boolean): string {
+  if (critical) return 'Escalate';
+  switch (s) {
+    case 'warn':
+      return 'Escalating';
+    case 'watch':
+      return 'Watch';
+    case 'crit':
+      return 'Escalate';
+    default:
+      return 'Stable';
+  }
+}
+
+function KpiStrip({
+  connected,
+  lastSync,
+  total,
+  today,
+  severity,
+}: {
+  connected: boolean;
+  lastSync: LastSyncStatus | null;
+  total: number;
+  today: number;
+  severity: Severity | null;
+}) {
+  const statusLabel = severity ? severityLabel(severity) : 'Stable';
+  const statusColor = severity ? severityMeta(severity).color : palette.calm;
+  const syncText = lastSync ? formatRelative(lastSync.at) : 'never';
+  const syncResult = lastSync ? syncLabel(lastSync.result) : 'Waiting';
+
+  return (
+    <View style={kpiStyles.row}>
+      <KpiTile label="STATUS" value={statusLabel} valueColor={statusColor} />
+      <KpiTile
+        label="STREAM"
+        value={connected ? 'Live' : 'Connecting'}
+        valueColor={connected ? palette.calm : palette.watch}
+      />
+      <KpiTile label="SYNC" value={syncText} hint={syncResult} />
+      <KpiTile label="CALLS" value={`${total}`} hint={`${today} today`} />
+    </View>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  hint,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  valueColor?: string;
+}) {
+  return (
+    <View style={kpiStyles.tile}>
+      <Text style={kpiStyles.kicker}>{label}</Text>
+      <Text
+        style={[kpiStyles.value, valueColor ? { color: valueColor } : null]}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
+      {hint ? (
+        <Text style={kpiStyles.hint} numberOfLines={1}>
+          {hint}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -542,15 +484,15 @@ function syncLabel(r: LastSyncStatus['result']): string {
     case 'no_creds':
       return 'Not paired';
     case 'no_perms':
-      return 'Health permissions missing';
+      return 'Permissions';
     case 'partial':
-      return 'Partial — some chunks failed';
+      return 'Partial';
     case 'rate_limited':
-      return 'Rate limited — will retry';
+      return 'Rate limited';
     case 'revoked':
-      return 'Device unpaired by care team';
+      return 'Revoked';
     case 'dev_unsigned':
-      return 'Demo session — uploads not authorized';
+      return 'Demo';
     case 'error':
       return 'Error';
   }
@@ -569,42 +511,6 @@ function formatRelative(iso: string): string {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-
-  syncHint: {
-    fontSize: 11,
-    color: palette.textDim,
-    marginTop: -space.sm,
-    marginBottom: space.xs,
-  },
-
-  modalRoot: {
-    flex: 1,
-    backgroundColor: 'rgba(2,6,15,0.55)',
-  },
-  modalDismiss: { flex: 1 },
-  settingsSheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    backgroundColor: palette.canvasRise,
-    borderBottomLeftRadius: radius.xl,
-    borderBottomRightRadius: radius.xl,
-    borderWidth: 1,
-    borderTopWidth: 0,
-    borderColor: palette.glassBorder,
-    paddingHorizontal: space.lg,
-    paddingBottom: space.lg,
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: palette.textFaint,
-    marginBottom: space.md,
-    opacity: 0.85,
-  },
 
   heroRow: {
     flexDirection: 'row',
@@ -639,12 +545,12 @@ const styles = StyleSheet.create({
   heroRiskLabel: {
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 1,
+    letterSpacing: 1.4,
     color: palette.textDim,
     marginBottom: 2,
   },
   heroRiskNum: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '700',
     letterSpacing: -0.5,
   },
@@ -653,7 +559,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: palette.textDim,
     fontWeight: '700',
-    letterSpacing: 1.1,
+    letterSpacing: 1.4,
     marginBottom: space.sm,
   },
   linkInline: {
@@ -718,7 +624,7 @@ const styles = StyleSheet.create({
   scoreLabel: {
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 1.0,
+    letterSpacing: 1.2,
     color: palette.textDim,
     marginBottom: 2,
   },
@@ -731,7 +637,7 @@ const styles = StyleSheet.create({
   scoreMiniLabel: {
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 1.0,
     color: palette.textDim,
     marginBottom: 2,
   },
@@ -760,7 +666,39 @@ const styles = StyleSheet.create({
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 6, height: 6, borderRadius: 3 },
   legendText: { fontSize: 11, color: palette.textMuted },
+});
 
-  body: { fontSize: 14, color: palette.text },
-  muted: { fontSize: 12, color: palette.textDim, lineHeight: 17 },
+const kpiStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  tile: {
+    flex: 1,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: palette.glassBorder,
+    backgroundColor: palette.glassBg,
+    minWidth: 0,
+  },
+  kicker: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.3,
+    color: palette.textDim,
+    marginBottom: 4,
+  },
+  value: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
+    letterSpacing: -0.2,
+  },
+  hint: {
+    fontSize: 10,
+    color: palette.textMuted,
+    marginTop: 2,
+  },
 });

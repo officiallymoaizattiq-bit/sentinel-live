@@ -1,21 +1,51 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { radius, severityMeta, type Severity } from './theme';
 
 type Props = {
   severity: Severity;
   label?: string;
   size?: 'sm' | 'md';
+  /** When true, the chip gently pulses to signal a critical escalation. */
+  pulse?: boolean;
 };
 
 /**
  * Mirror of the web SeverityChip — a pill with a colored dot + uppercase
  * label, tinted by severity band. Used for the patient status signal.
  */
-export function SeverityChip({ severity, label, size = 'md' }: Props) {
+export function SeverityChip({ severity, label, size = 'md', pulse = false }: Props) {
   const meta = severityMeta(severity);
   const sz = size === 'sm' ? SIZES.sm : SIZES.md;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!pulse) {
+      opacity.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.55,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, opacity]);
+
   return (
-    <View
+    <Animated.View
       style={[
         styles.root,
         {
@@ -23,6 +53,7 @@ export function SeverityChip({ severity, label, size = 'md' }: Props) {
           borderColor: meta.border,
           paddingHorizontal: sz.px,
           paddingVertical: sz.py,
+          opacity: pulse ? opacity : 1,
         },
       ]}
     >
@@ -43,7 +74,7 @@ export function SeverityChip({ severity, label, size = 'md' }: Props) {
       >
         {label ?? meta.label}
       </Text>
-    </View>
+    </Animated.View>
   );
 }
 

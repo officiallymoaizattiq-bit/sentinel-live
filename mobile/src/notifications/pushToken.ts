@@ -90,6 +90,9 @@ export async function getPushToken(): Promise<PushTokenInfo | null> {
 
   try {
     const result = await Notifications.getExpoPushTokenAsync({ projectId });
+    if (__DEV__) {
+      console.log('[push] got token', result.data);
+    }
     return {
       token: result.data,
       provider: 'expo',
@@ -118,6 +121,9 @@ export async function registerPushToken(creds: Credentials): Promise<void> {
       provider: info.provider,
       platform: info.platform,
     });
+    if (__DEV__) {
+      console.log('[push] registered with backend', info.token);
+    }
   } catch (e) {
     if (e instanceof ApiCallError && e.error.kind === 'auth') {
       // Caller (root layout) handles auth churn elsewhere; rethrow so the
