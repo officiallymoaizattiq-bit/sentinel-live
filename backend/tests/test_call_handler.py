@@ -37,3 +37,34 @@ def test_twiml_prompt_contains_patient_name():
     xml = ch.build_check_in_twiml(patient_name="Alex",
                                   action_url="http://x/api/calls/gather")
     assert "Alex" in xml and "<Gather" in xml
+
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_dial_with_watchdog_spawns_watchdog_task():
+    from sentinel import call_handler
+
+    with patch.object(call_handler, "_dispatch_elevenlabs",
+                      AsyncMock(return_value={"conversation_id": "conv_xyz"})), \
+         patch.object(call_handler.asyncio, "create_task") as ct:
+        result = await call_handler.dial_patient_with_watchdog(
+            patient_id="p1", call_id="c1"
+        )
+    assert result["conversation_id"] == "conv_xyz"
+    ct.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_dial_with_watchdog_skips_watchdog_if_no_conversation_id():
+    from sentinel import call_handler
+
+    with patch.object(call_handler, "_dispatch_elevenlabs",
+                      AsyncMock(return_value={})), \
+         patch.object(call_handler.asyncio, "create_task") as ct:
+        await call_handler.dial_patient_with_watchdog(patient_id="p1", call_id="c1")
+    ct.assert_not_called()
