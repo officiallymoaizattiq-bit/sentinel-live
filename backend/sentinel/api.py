@@ -17,6 +17,7 @@ from sentinel.auth import require_device_token
 from sentinel.call_handler import build_check_in_twiml
 from sentinel.db import get_db
 from sentinel.models import Caregiver, Consent, SurgeryType
+from sentinel.summarization import summarize_nurse, summarize_patient
 
 router = APIRouter(prefix="/api")
 
@@ -99,6 +100,63 @@ async def list_alerts():
         }
         async for d in cur
     ]
+
+
+@router.post("/alerts/{alert_id}/ack")
+async def ack_alert(alert_id: str):
+    db = get_db()
+    res = await db.alerts.find_one_and_update(
+        {"_id": alert_id, "acknowledged": {"$ne": True}},
+        {"$set": {
+            "acknowledged": True,
+            "acknowledged_at": datetime.now(timezone.utc),
+            "ack_at": datetime.now(timezone.utc),  # legacy-compat mirror
+        }},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(409, "already acknowledged or missing")
+    event_bus.publish({"type": "alert_ack", "alert_id": alert_id})
+    return {"id": alert_id, "acknowledged": True}
+
+
+@router.get("/alerts/open-count")
+async def open_alert_count():
+    db = get_db()
+    count = await db.alerts.count_documents({
+        "severity": {"$in": ["nurse_alert", "suggest_911"]},
+        "$or": [{"acknowledged": False}, {"acknowledged": {"$exists": False}}],
+    })
+    return {"count": count}
+
+
+@router.post("/calls/{call_id}/summary/regenerate")
+async def regenerate_summary(call_id: str):
+    db = get_db()
+    doc = await db.calls.find_one({"_id": call_id})
+    if not doc:
+        raise HTTPException(404, "call not found")
+    transcript = "\n".join(
+        f"{t['role']}: {t['text']}" for t in doc.get("transcript", [])
+    )
+    score = doc.get("score") or {}
+    p = await summarize_patient(transcript=transcript)
+    n = await summarize_nurse(
+        transcript=transcript,
+        vitals={},
+        score={k: score.get(k) for k in ("deterioration", "qsofa", "news2")},
+    )
+    now = datetime.now(timezone.utc)
+    await db.calls.update_one(
+        {"_id": call_id},
+        {"$set": {
+            "summary_patient": p,
+            "summary_nurse": n,
+            "summaries_generated_at": now,
+            "summaries_error": None,
+        }},
+    )
+    return {"summary_patient": p, "summary_nurse": n}
 
 
 @router.get("/calls/twiml")
