@@ -20,9 +20,9 @@ class Settings(BaseSettings):
 
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "sentinel"
-    openrouter_api_key: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "google/gemini-2.0-flash-001"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    gemini_embed_model: str = "text-embedding-004"
     elevenlabs_api_key: str = ""
     elevenlabs_agent_id: str = ""
     twilio_account_sid: str = ""

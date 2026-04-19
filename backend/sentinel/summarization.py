@@ -4,7 +4,7 @@ import logging
 from types import SimpleNamespace
 from typing import Any
 
-from openai import AsyncOpenAI
+import google.generativeai as genai
 
 from sentinel.config import get_settings
 
@@ -34,11 +34,12 @@ Clinical summary:"""
 
 
 def _extract_text(response: Any) -> str:
-    """Pull plain text out of a response without crashing on blocked
+    """Pull plain text out of a Gemini response without crashing on blocked
     or empty responses.
 
-    Fast path matches AsyncMock shape (object with plain .text attr).
-    Fallback walks OpenAI chat-completion `choices[0].message.content`.
+    Fast path matches AsyncMock shape (object with plain `.text` attr) and
+    real `GenerativeModel.generate_content_async` responses, which also
+    expose `.text`. Falls back to walking `candidates[0].content.parts[*].text`.
     """
     try:
         text = getattr(response, "text", None)
@@ -48,50 +49,43 @@ def _extract_text(response: Any) -> str:
         pass
 
     try:
-        choices = getattr(response, "choices", None) or []
-        for ch in choices:
-            msg = getattr(ch, "message", None)
-            if not msg:
-                continue
-            content = getattr(msg, "content", None)
-            if isinstance(content, str) and content.strip():
-                return content.strip()
+        candidates = getattr(response, "candidates", None) or []
+        for ch in candidates:
+            content = getattr(ch, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for p in parts:
+                t = getattr(p, "text", None)
+                if isinstance(t, str) and t.strip():
+                    return t.strip()
     except Exception:
         pass
 
     return ""
 
 
-def _client() -> AsyncOpenAI:
+def _model() -> genai.GenerativeModel:
     s = get_settings()
-    if not s.openrouter_api_key:
+    if not s.gemini_api_key:
         raise RuntimeError(
-            "openrouter_api_key is empty — set OPENROUTER_API_KEY in "
+            "gemini_api_key is empty — set GEMINI_API_KEY in "
             "backend/.env so post-call summaries can be generated."
         )
-    return AsyncOpenAI(api_key=s.openrouter_api_key, base_url=s.openrouter_base_url)
+    genai.configure(api_key=s.gemini_api_key)
+    return genai.GenerativeModel(s.gemini_model)
 
 
 async def _generate(prompt: str) -> Any:
-    s = get_settings()
-    client = _client()
-    resp = await client.chat.completions.create(
-        model=s.openrouter_model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    content = ""
-    try:
-        content = (resp.choices[0].message.content or "").strip()
-    except Exception:
-        content = ""
-    return SimpleNamespace(text=content, _raw=resp)
+    model = _model()
+    resp = await model.generate_content_async(prompt)
+    text = _extract_text(resp)
+    return SimpleNamespace(text=text, _raw=resp)
 
 
 async def _extract_or_raise(response: Any) -> str:
     text = _extract_text(response)
     if not text:
-        log.warning("OpenRouter returned no text. raw=%s", getattr(response, "_raw", None))
-        raise RuntimeError("OpenRouter returned an empty response")
+        log.warning("Gemini returned no text. raw=%s", getattr(response, "_raw", None))
+        raise RuntimeError("Gemini returned an empty response")
     return text
 
 

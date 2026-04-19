@@ -30,8 +30,8 @@ Create `backend/.env` with:
 |---|---|---|
 | `MONGO_URI` | Mongo connection string | Atlas cluster "Connect" |
 | `MONGO_DB` | DB name (default `sentinel`) | you pick |
-| `OPENROUTER_API_KEY` | Routes Gemini 2.0 Flash for scoring + summaries | openrouter.ai/keys |
-| `OPENROUTER_MODEL` | (optional) override, default `google/gemini-2.0-flash-001` | openrouter.ai/models |
+| `GEMINI_API_KEY` | Google Gemini for scoring + summaries | aistudio.google.com/apikey |
+| `GEMINI_MODEL` | (optional) override, default `gemini-2.0-flash` | ai.google.dev/models/gemini |
 | `ELEVENLABS_API_KEY` | EL conversational AI | elevenlabs.io -> profile |
 | `ELEVENLABS_AGENT_ID` | Agent you created | EL dashboard -> Agents |
 | `ELEVENLABS_PHONE_NUMBER_ID` | Twilio # registered with EL | output of step 5 script |
@@ -79,13 +79,13 @@ python scripts/register_twilio_with_el.py +15551234567 "Sentinel Line"
 
 Paste the printed `phone_number_id` into `ELEVENLABS_PHONE_NUMBER_ID`.
 
-## 6. OpenRouter key
+## 6. Gemini key
 
-Go to https://openrouter.ai/keys, create a key, paste into
-`OPENROUTER_API_KEY`. OpenRouter proxies Gemini 2.0 Flash (`google/gemini-2.0-flash-001`)
-via an OpenAI-compatible endpoint, so no Google API project is required.
-Note: OpenRouter does not expose embeddings — vector search uses a zero-vector
-fallback and degrades to cohort-outcome recency ranking.
+Go to https://aistudio.google.com/apikey, create a key, paste into
+`GEMINI_API_KEY`. Sentinel calls Gemini 2.0 Flash directly via the
+`google-generativeai` SDK for both structured scoring (function calling
+on `emit_score`) and post-call summaries; embeddings use
+`text-embedding-004` for cohort `$vectorSearch`.
 
 ## 7. ngrok (for live calls)
 

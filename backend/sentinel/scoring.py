@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 from uuid import uuid4
 
-from openai import AsyncOpenAI
+import google.generativeai as genai
 
 from sentinel.audio_features import rules_only_score
 from sentinel.config import get_settings
@@ -18,7 +18,7 @@ from sentinel.models import (
     TranscriptTurn,
 )
 
-_EMBED_DIM = 1536
+_EMBED_DIM = 768  # text-embedding-004
 
 RUBRIC = """You are a post-operative abdominal-surgery monitoring assistant.
 Given a phone check-in transcript plus voice biomarkers plus prior call history,
@@ -83,8 +83,7 @@ class LLM(Protocol):
 
 
 _EMIT_SCORE_TOOL = {
-    "type": "function",
-    "function": {
+    "function_declarations": [{
         "name": "emit_score",
         "description": "Emit deterioration score.",
         "parameters": {
@@ -105,23 +104,28 @@ _EMIT_SCORE_TOOL = {
                 "red_flags", "summary", "recommended_action",
             ],
         },
-    },
+    }],
 }
 
 
 class GeminiLLM:
-    """Scoring LLM backed by OpenRouter. Name kept for import compatibility."""
+    """Scoring LLM backed by Google Gemini (function-calling for the
+    structured `emit_score` tool, `text-embedding-004` for embeddings).
+    """
 
     def __init__(self) -> None:
         s = get_settings()
-        if not s.openrouter_api_key:
+        if not s.gemini_api_key:
             raise RuntimeError(
-                "openrouter_api_key is empty — set OPENROUTER_API_KEY in backend/.env"
+                "gemini_api_key is empty — set GEMINI_API_KEY in backend/.env"
             )
-        self._client = AsyncOpenAI(
-            api_key=s.openrouter_api_key, base_url=s.openrouter_base_url
+        genai.configure(api_key=s.gemini_api_key)
+        self._model = genai.GenerativeModel(
+            s.gemini_model,
+            tools=[_EMIT_SCORE_TOOL],
+            system_instruction=RUBRIC,
         )
-        self._model_id = s.openrouter_model
+        self._embed_model = s.gemini_embed_model
 
     async def score(self, *, transcript, features, drift, history, rubric, vitals) -> Score:
         user = json.dumps({
@@ -131,29 +135,18 @@ class GeminiLLM:
             "history_last_3_calls": history,
             "vitals_last_2h": vitals,
         })
-        resp = await self._client.chat.completions.create(
-            model=self._model_id,
-            messages=[
-                {"role": "system", "content": rubric or RUBRIC},
-                {"role": "user", "content": user},
-            ],
-            tools=[_EMIT_SCORE_TOOL],
-            tool_choice={"type": "function", "function": {"name": "emit_score"}},
-        )
-        msg = resp.choices[0].message
-        tool_calls = getattr(msg, "tool_calls", None) or []
-        for tc in tool_calls:
-            fn = getattr(tc, "function", None)
-            if fn and fn.name == "emit_score":
-                args = json.loads(fn.arguments or "{}")
+        resp = await self._model.generate_content_async(user)
+        for part in resp.candidates[0].content.parts:
+            fc = getattr(part, "function_call", None)
+            if fc and fc.name == "emit_score":
+                args = dict(fc.args)
                 args["recommended_action"] = RecommendedAction(args["recommended_action"])
                 return Score(**args)
-        raise RuntimeError("OpenRouter did not emit_score")
+        raise RuntimeError("Gemini did not emit_score")
 
     async def embed(self, text: str) -> list[float]:
-        # Option C: OpenRouter has no embeddings endpoint. Return zero vector;
-        # vector search degrades gracefully via the existing dot-product fallback.
-        return [0.0] * _EMBED_DIM
+        r = await genai.embed_content_async(model=self._embed_model, content=text)
+        return r["embedding"]
 
 
 async def _last_3_calls(patient_id: str) -> list[dict]:
@@ -229,7 +222,7 @@ async def score_call(
     try:
         embedding = await llm.embed(transcript_text or score.summary)
     except Exception:
-        embedding = [0.0] * 1536
+        embedding = [0.0] * _EMBED_DIM
 
     similar = await _vector_search(embedding)
 

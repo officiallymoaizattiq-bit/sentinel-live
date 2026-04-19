@@ -11,10 +11,10 @@ services:
         sync: false
       - key: MONGO_DB
         value: sentinel
-      - key: OPENROUTER_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      - key: OPENROUTER_MODEL
-        value: google/gemini-2.0-flash-001
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
       - key: ELEVENLABS_API_KEY
         sync: false
       - key: ELEVENLABS_AGENT_ID
