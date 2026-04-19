@@ -37,13 +37,15 @@ export const palette = {
   warn: '#FB923C',
   crit: '#F43F5E',
 
-  // Glass layers (semi-transparent white on a dark canvas).
-  glassBg: 'rgba(255,255,255,0.055)',
-  glassBgStrong: 'rgba(255,255,255,0.08)',
-  glassBgAccent: 'rgba(59,130,246,0.10)',
-  glassBorder: 'rgba(255,255,255,0.10)',
-  glassBorderStrong: 'rgba(255,255,255,0.16)',
-  glassInset: 'rgba(255,255,255,0.06)',
+  // Glass layers — web uses rgba(white) + backdrop-filter saturate(155%) on
+  // top of a blue canvas to pick up a cool wash. RN can't do backdrop-filter,
+  // so we pre-tint the fill in accent-400 to recreate the same bluish frost.
+  glassBg: 'rgba(96,165,250,0.07)',
+  glassBgStrong: 'rgba(96,165,250,0.11)',
+  glassBgAccent: 'rgba(59,130,246,0.14)',
+  glassBorder: 'rgba(147,197,253,0.18)',
+  glassBorderStrong: 'rgba(147,197,253,0.26)',
+  glassInset: 'rgba(147,197,253,0.10)',
 
   // Severity-tinted panels.
   critBg: 'rgba(244,63,94,0.10)',
