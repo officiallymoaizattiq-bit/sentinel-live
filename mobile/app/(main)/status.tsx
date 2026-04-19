@@ -352,7 +352,7 @@ export default function PatientDashboard() {
         </Glass>
       )}
 
-      {last_call ? <CheckInSummaryCard creds={creds} call={last_call} /> : null}
+      {last_call ? <CheckInSummaryCard call={last_call} /> : null}
 
       <Glass padded>
         <View style={styles.chartHeader}>
