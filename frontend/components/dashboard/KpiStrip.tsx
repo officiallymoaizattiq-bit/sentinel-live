@@ -81,10 +81,12 @@ export function KpiStrip({
   initialPatients,
   initialAlerts,
   initialSummaries,
+  initialOpenAlertCount,
 }: {
   initialPatients: Patient[];
   initialAlerts?: Alert[];
   initialSummaries?: Record<string, { lastDeterioration: number | null }>;
+  initialOpenAlertCount?: number;
 }) {
   const sp = useSearchParams();
   const filterParams = useMemo(
@@ -112,6 +114,7 @@ export function KpiStrip({
 
   // Live-extend poll-derived alerts with any SSE-pushed alerts in between polls.
   const [liveAlerts, setLiveAlerts] = useState<Alert[]>([]);
+  const [openCount, setOpenCount] = useState<number>(initialOpenAlertCount ?? 0);
   useEventStream((e) => {
     if (e.type === "alert") {
       setLiveAlerts((prev) => {
@@ -129,6 +132,8 @@ export function KpiStrip({
         return [next, ...prev].slice(0, 50);
       });
     }
+    if (e.type === "alert_opened") setOpenCount((n) => n + 1);
+    else if (e.type === "alert_ack") setOpenCount((n) => Math.max(0, n - 1));
   });
   // Merge, deduping on call_id+severity so polling eventually reconciles live-only.
   const as: Alert[] = (() => {
@@ -236,7 +241,7 @@ export function KpiStrip({
     },
     {
       label: "Open alerts",
-      value: open.toString().padStart(2, "0"),
+      value: openCount.toString().padStart(2, "0"),
       hint: crit ? `${crit} critical` : "None critical",
       accent:
         crit > 0

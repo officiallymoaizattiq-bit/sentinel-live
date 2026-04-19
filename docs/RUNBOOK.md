@@ -187,3 +187,35 @@ Order of operations, ~6 min:
   exactly `cohort_vec`.
 - EL call connects but no transcript: agent ID wrong, or agent has no
   system prompt configured.
+
+## Call Lifecycle Demo Checklist
+
+1. Start backend (`uvicorn sentinel.main:app --port 8000` in `backend/`) and frontend (`next dev -p 3001` in `frontend/`).
+2. Trigger `CallNow` for a seeded patient from the admin dashboard.
+3. Verify the call auto-terminates within ≤40 seconds (watchdog or ElevenLabs post-call webhook).
+4. **Patient dashboard** (`/patient`): simple summary card appears with shimmer → fade-in animation.
+5. **Nurse detail page** (`/patients/[id]`): clinical summary card renders above the call timeline.
+6. If outcome = `escalated_911`:
+   - Patient side: `Fake911Modal` full-screen overlay with TTS ("Ambulance dispatched…"); auto-dismiss ≤15s.
+   - Nurse side: sticky red `Critical911Banner` at top of the admin shell until the Acknowledge button is clicked.
+7. KPI **Open alerts** count increments on each new `alert_opened` SSE event; decrements on **Ack**.
+8. Ack button on each alert row removes the row from `AlertFeed`.
+9. `TrajectoryChart` + `CallTimeline` render a colored marker at the new call's timestamp — green (`fine`), amber (`schedule_visit`), or red (`escalated_911`).
+10. Reload the admin page: open-alert count reflects real server state via `GET /api/alerts/open-count`.
+
+## Call Lifecycle Regression Matrix
+
+Backend tests to keep green on every change:
+
+- `tests/test_models.py` — Call + Alert field defaults
+- `tests/test_outcomes.py` — outcome derivation
+- `tests/test_summarization.py` — Gemini patient + nurse prompts
+- `tests/test_config.py` — new settings fields
+- `tests/test_finalize.py` — idempotency, Gemini failure, 911 escalation paths
+- `tests/test_webhook_post_call.py` — HMAC verify, demo bypass, bad/good payloads
+- `tests/test_watchdog.py` — 40s timeout, no-op races
+- `tests/test_call_handler.py` — `dial_patient_with_watchdog` spawn + no-op
+- `tests/test_alert_ack.py` — ack, 409 on dup/missing, SSE emit
+- `tests/test_open_alert_count.py` — count filter
+- `tests/test_summary_regenerate.py` — on-demand regen, 404 on missing
+- `tests/test_call_lifecycle.py` — end-to-end integration + watchdog/webhook race

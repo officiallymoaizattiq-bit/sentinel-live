@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Area,
   AreaChart,
   CartesianGrid,
+  Customized,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -23,7 +25,49 @@ export type TrajectoryPoint = {
   deterioration: number;
   /** ISO time for tooltip (axis uses `t`). */
   at?: string;
+  outcome_label?: "fine" | "schedule_visit" | "escalated_911";
 };
+
+const OUTCOME_COLOR: Record<string, string> = {
+  fine: "#34D399",
+  schedule_visit: "#FBBF24",
+  escalated_911: "#F43F5E",
+};
+
+function OutcomeMarkers({
+  data,
+  xAxisMap,
+  yAxisMap,
+}: {
+  data?: TrajectoryPoint[];
+  xAxisMap?: Record<string, { scale: (v: string) => number }>;
+  yAxisMap?: Record<string, { scale: (v: number) => number }>;
+}) {
+  if (!data || !xAxisMap || !yAxisMap) return null;
+  const xScale = Object.values(xAxisMap)[0]?.scale;
+  const yScale = Object.values(yAxisMap)[0]?.scale;
+  if (!xScale || !yScale) return null;
+  return (
+    <>
+      {data.map((p, i) => {
+        if (!p.outcome_label || !OUTCOME_COLOR[p.outcome_label]) return null;
+        const cx = xScale(p.t);
+        const cy = yScale(p.deterioration);
+        return (
+          <circle
+            key={i}
+            cx={cx}
+            cy={cy}
+            r={5}
+            fill={OUTCOME_COLOR[p.outcome_label]}
+            stroke="#0A0F1F"
+            strokeWidth={1.5}
+          />
+        );
+      })}
+    </>
+  );
+}
 
 function GlassTooltip({
   active,
@@ -55,6 +99,9 @@ function GlassTooltip({
 }
 
 export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const bands = deteriorationScoreBands();
   const last = points[points.length - 1];
   const strokeColor =
@@ -141,6 +188,7 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
             }}
             isAnimationActive
           />
+          {mounted && <Customized component={OutcomeMarkers} />}
         </AreaChart>
       </ResponsiveContainer>
     </div>

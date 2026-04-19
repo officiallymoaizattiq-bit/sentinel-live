@@ -14,3 +14,18 @@ dist/
 
 # Frontend env
 .env.local
+
+# --- mobile (Expo / React Native) ---
+mobile/node_modules/
+mobile/.expo/
+mobile/.expo-shared/
+mobile/android/
+mobile/ios/
+mobile/*.log
+mobile/.env
+mobile/.env.local
+mobile/web-build/
+.env.*.local
+
+# TS build info
+*.tsbuildinfo

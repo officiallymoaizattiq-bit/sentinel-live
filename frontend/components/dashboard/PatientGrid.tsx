@@ -20,12 +20,14 @@ type CallSummary = {
   series: number[];
   lastDeterioration: number | null;
   lastCalledAt: string | null;
+  lastOutcome: "fine" | "schedule_visit" | "escalated_911" | null;
 };
 
 const EMPTY: CallSummary = {
   series: [],
   lastDeterioration: null,
   lastCalledAt: null,
+  lastOutcome: null,
 };
 
 function summarize(calls: CallRecord[]): CallSummary {
@@ -39,6 +41,7 @@ function summarize(calls: CallRecord[]): CallSummary {
     series,
     lastDeterioration: lastScored?.score?.deterioration ?? null,
     lastCalledAt: last.called_at ?? null,
+    lastOutcome: last?.outcome_label ?? null,
   };
 }
 
@@ -207,6 +210,7 @@ export function PatientGrid({
               lastDeterioration={s.lastDeterioration}
               lastCalledAt={s.lastCalledAt}
               footerAction={<CallNowButton patientId={p.id} />}
+              lastOutcome={s.lastOutcome}
             />
           );
         })}

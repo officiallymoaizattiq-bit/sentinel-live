@@ -34,13 +34,16 @@ def create_app(*, start_scheduler: bool = True) -> FastAPI:
     app = FastAPI(title="Sentinel", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000",
+                       "http://localhost:3001", "http://127.0.0.1:3001"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.include_router(router)
     app.include_router(auth_router)
+    from sentinel import webhooks as webhooks_mod
+    app.include_router(webhooks_mod.router)
     return app
 
 

@@ -6,6 +6,7 @@ import { CohortPanel } from "@/components/CohortPanel";
 import { PatientHero } from "@/components/patient/PatientHero";
 import { VitalsRow } from "@/components/patient/VitalsRow";
 import { CallTimeline } from "@/components/patient/CallTimeline";
+import { CallLogCard } from "@/components/patient/CallLogCard";
 import {
   formatTrajectoryAxisLabel,
   scoreToSeverity,
@@ -63,10 +64,16 @@ export default async function PatientDetail({
       t: formatTrajectoryAxisLabel(c.called_at),
       at: c.called_at,
       deterioration: c.score!.deterioration,
+      outcome_label: c.outcome_label ?? undefined,
     }));
 
   const lastCall = calls[calls.length - 1] ?? null;
   const lastScored = latestScoredCall(calls);
+  const lastFinalized =
+    [...calls]
+      .reverse()
+      .find((c) => c.summary_nurse || c.summary_patient || c.outcome_label) ??
+    lastCall;
   const severity: Severity = scoreToSeverity(
     lastScored?.score?.deterioration ?? null
   );
@@ -130,11 +137,15 @@ export default async function PatientDetail({
       </Glass>
 
       <section>
+        <h3 className="mb-2 text-sm text-slate-400">Wearable vitals (24h)</h3>
         <VitalsPanel patientId={params.id} />
       </section>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="min-w-0 lg:col-span-3">
+        <div className="min-w-0 space-y-4 lg:col-span-3">
+          {lastFinalized && (
+            <CallLogCard call={lastFinalized} audience="nurse" />
+          )}
           <CallTimeline calls={calls} />
         </div>
         <div id="cohort" className="scroll-mt-24 min-w-0 lg:col-span-2">

@@ -17,6 +17,7 @@ from sentinel.auth import require_device_token
 from sentinel.call_handler import build_check_in_twiml
 from sentinel.db import get_db
 from sentinel.models import Caregiver, Consent, SurgeryType
+from sentinel.summarization import summarize_nurse, summarize_patient
 
 router = APIRouter(prefix="/api")
 
@@ -77,11 +78,21 @@ async def patient_calls(pid: str):
     return [
         {
             "id": d["_id"],
+            "patient_id": d.get("patient_id"),
             "called_at": d["called_at"],
             "score": d.get("score"),
             "similar_calls": d.get("similar_calls", []),
             "short_call": d.get("short_call", False),
             "llm_degraded": d.get("llm_degraded", False),
+            "summary_patient": d.get("summary_patient"),
+            "summary_nurse": d.get("summary_nurse"),
+            "summaries_generated_at": d.get("summaries_generated_at"),
+            "summaries_error": d.get("summaries_error"),
+            "outcome_label": d.get("outcome_label"),
+            "escalation_911": d.get("escalation_911", False),
+            "conversation_id": d.get("conversation_id"),
+            "ended_at": d.get("ended_at"),
+            "end_reason": d.get("end_reason"),
         }
         async for d in cur
     ]
@@ -101,6 +112,117 @@ async def list_alerts():
         }
         async for d in cur
     ]
+
+
+@router.post("/alerts/{alert_id}/ack")
+async def ack_alert(alert_id: str):
+    db = get_db()
+    res = await db.alerts.find_one_and_update(
+        {"_id": alert_id, "acknowledged": {"$ne": True}},
+        {"$set": {
+            "acknowledged": True,
+            "acknowledged_at": datetime.now(timezone.utc),
+            "ack_at": datetime.now(timezone.utc),  # legacy-compat mirror
+        }},
+        return_document=True,
+    )
+    if not res:
+        raise HTTPException(409, "already acknowledged or missing")
+    event_bus.publish({"type": "alert_ack", "alert_id": alert_id})
+    return {"id": alert_id, "acknowledged": True}
+
+
+@router.get("/alerts/open-count")
+async def open_alert_count():
+    db = get_db()
+    count = await db.alerts.count_documents({
+        "severity": {"$in": ["nurse_alert", "suggest_911"]},
+        "$or": [{"acknowledged": False}, {"acknowledged": {"$exists": False}}],
+    })
+    return {"count": count}
+
+
+@router.post("/calls/{call_id}/summary/regenerate")
+async def regenerate_summary(call_id: str):
+    db = get_db()
+    doc = await db.calls.find_one({"_id": call_id})
+    if not doc:
+        raise HTTPException(404, "call not found")
+    transcript = "\n".join(
+        f"{t['role']}: {t['text']}" for t in doc.get("transcript", [])
+    )
+    score = doc.get("score") or {}
+    p = await summarize_patient(transcript=transcript)
+    n = await summarize_nurse(
+        transcript=transcript,
+        vitals={},
+        score={k: score.get(k) for k in ("deterioration", "qsofa", "news2")},
+    )
+    now = datetime.now(timezone.utc)
+    await db.calls.update_one(
+        {"_id": call_id},
+        {"$set": {
+            "summary_patient": p,
+            "summary_nurse": n,
+            "summaries_generated_at": now,
+            "summaries_error": None,
+        }},
+    )
+    return {"summary_patient": p, "summary_nurse": n}
+
+
+class WidgetEndBody(BaseModel):
+    patient_id: str
+    transcript: str | None = None
+    severity: str | None = None  # optional override: none|patient_check|nurse_alert|suggest_911
+
+
+@router.post("/calls/widget-end")
+async def widget_end_call(body: WidgetEndBody):
+    from uuid import uuid4
+    from sentinel.finalize import finalize_call
+
+    db = get_db()
+    call_id = str(uuid4())
+    conv_id = f"widget-{call_id}"
+    action = body.severity or "none"
+    det_map = {"none": 0.12, "patient_check": 0.25, "caregiver_alert": 0.35,
+               "nurse_alert": 0.55, "suggest_911": 0.85}
+    det = det_map.get(action, 0.12)
+    news2 = 2 if det < 0.3 else 5 if det < 0.6 else 12
+    qsofa = 0 if det < 0.6 else 2
+    red_flags = ["sepsis"] if action == "suggest_911" else []
+    summary_text = "Simulated widget check-in transcript." if not body.transcript else body.transcript[:200]
+    transcript_text = body.transcript or "agent: How are you feeling today?\npatient: I feel okay, a little tired."
+    await db.calls.insert_one({
+        "_id": call_id,
+        "patient_id": body.patient_id,
+        "called_at": datetime.now(timezone.utc),
+        "conversation_id": conv_id,
+        "transcript": [
+            {"role": "patient", "text": transcript_text, "t_start": 0.0, "t_end": 20.0}
+        ],
+        "score": {
+            "deterioration": det,
+            "qsofa": qsofa,
+            "news2": news2,
+            "red_flags": red_flags,
+            "summary": summary_text,
+            "recommended_action": action,
+        },
+        "similar_calls": [],
+        "audio_features": {},
+        "baseline_drift": {},
+        "llm_degraded": False,
+        "audio_degraded": False,
+        "short_call": False,
+    })
+    result = await finalize_call(
+        conversation_id=conv_id,
+        transcript=transcript_text,
+        end_reason="manual",
+    )
+    return {"call_id": call_id, **result}
 
 
 @router.get("/calls/twiml")
@@ -216,6 +338,24 @@ class PairExchangeBody(_PM):
 @router.post("/pair/exchange")
 async def pair_exchange(body: PairExchangeBody):
     return await pairing_mod.exchange_code(code=body.code, device_info=body.device_info)
+
+
+class MobileDemoLoginBody(_PM):
+    patient_id: str
+    passkey: str
+    device_info: dict[str, Any] = {}
+
+
+@router.post("/mobile/demo-login")
+async def mobile_demo_login(body: MobileDemoLoginBody):
+    """Mobile equivalent of the web /api/auth/login flow. Lets a demo user
+    skip the 6-digit pairing code by entering the configured passkey, and
+    receives a real signed device token so vitals uploads succeed."""
+    return await pairing_mod.demo_login(
+        patient_id=body.patient_id,
+        passkey=body.passkey,
+        device_info=body.device_info,
+    )
 
 
 @router.post("/devices/{device_id}/revoke", status_code=204)

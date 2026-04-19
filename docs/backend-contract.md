@@ -157,7 +157,99 @@ Content-Type: application/json
 
 ---
 
-## 6. v2 / out of scope (documented for later)
+## 6. Patient dashboard reads (mobile-only)
+
+The mobile app's patient dashboard reuses three endpoints originally built for the
+clinician web view. They are unauthenticated today and return JSON.
+
+### `GET /api/patients`
+Mobile filters the returned list client-side to find its own `patient_id`. We
+intentionally do **not** add a per-patient `GET /api/patients/{pid}` endpoint —
+the list is small enough that one fetch on dashboard mount is fine, and adding
+the route would mean a second contract surface to keep in sync.
+
+### `GET /api/patients/{pid}/calls`
+Returns the patient's `CallRecord[]` ordered ascending by `called_at`.
+
+Mobile uses this for two things:
+1. Initial render of the dashboard (latest summary + trajectory chart).
+2. Refetch on every `call_scored` SSE event for `patient_id` (see §7).
+
+### `GET /api/alerts`
+Optional. Mobile may surface clinician-facing alerts in a future build; not
+used by the v1 dashboard.
+
+---
+
+## 7. Server-Sent Events stream (`GET /api/stream`)
+
+Mobile subscribes to the same SSE feed the web `/patient` and `/admin` views
+use. Implementation detail: this endpoint is **unauthenticated** in v1 and is
+**not** filtered per-patient — every subscriber gets every event. Mobile filters
+client-side by `patient_id`. If/when per-patient filtering or auth lands, the
+mobile contract is to send `Authorization: Bearer <device_token>` (already
+included by the mobile client today as a forward-compat measure) and to read
+filtered events.
+
+### Event envelope
+
+Each SSE `data:` line is a single JSON object with a `type` discriminator:
+
+```ts
+type StreamEvent =
+  | { type: "hello" }
+  | { type: "alert";       patient_id: string; call_id: string; severity: string; summary: string; at: string }
+  | { type: "call_scored"; call_id: string; patient_id: string; score: object; at: string }
+  | { type: "pending_call"; patient_id: string; mode: "phone" | "widget"; at: string }
+  | { type: "vitals";       patient_id: string; device_id: string; accepted: number; at: string };
+```
+
+### Mobile client behavior
+
+- Connection: `react-native-sse` (browser `EventSource` is not available in
+  Hermes). Custom header `Authorization: Bearer <device_token>` is set on the
+  initial fetch.
+- Reconnect: exponential backoff capped at 30 s, retry counter resets on every
+  successful `open`. Mirrors the web `useEventStream` hook.
+- Foreground reconnect: SSE pauses while the app is backgrounded on both iOS
+  and Android, and the underlying socket is usually dead by the time we come
+  back. The mobile hook listens to `AppState` and force-cycles the connection
+  on `active`.
+- Per-patient filter: any event with a `patient_id` field that doesn't match
+  the device's paired `patient_id` is dropped before reaching the UI. Events
+  without a `patient_id` (e.g. `hello`) are passed through.
+
+### Event semantics for the mobile dashboard
+
+- `pending_call` → render the green "Sentinel is calling you" banner with
+  Answer / Dismiss. On Answer, mobile mounts the `@elevenlabs/react-native`
+  conversation (LiveKit + WebRTC) using `EXPO_PUBLIC_ELEVENLABS_AGENT_ID`,
+  mirroring the web's Convai widget.
+- `call_scored` → refetch `GET /api/patients/{pid}/calls` and re-render the
+  latest summary + trajectory chart.
+- `alert` → reserved for v2 (no mobile UI today).
+- `vitals` → ignored on mobile (the device generated it).
+
+### Open backend questions (still open)
+
+These were flagged in `mobile/HANDOFF.md` §3.4 and are not blocking the
+hackathon flow. Document them here when answered:
+
+1. **Per-patient filter / device auth on `/api/stream`.** Mobile filters
+   client-side today. If we later want to drop the broadcast model, decide
+   between:
+   - Accept `Authorization: Bearer <device_token>` and filter to that device's
+     `patient_id` on the existing `/api/stream`, OR
+   - New `/api/stream/device` route that does the same thing and leaves the
+     admin broadcast feed untouched.
+2. **Friendly patient name in pairing response.** `POST /api/pair/exchange`
+   currently returns `patient_id` only. Mobile would benefit from `name` so
+   the dashboard doesn't need a follow-up `/api/patients` fetch on first launch.
+   If added, document the field shape here and bump v1 → v1.1.
+
+---
+
+## 8. v2 / out of scope (documented for later)
 
 - Backfill on first pair (last N hours of HK/HC history).
 - Push token registration (`POST /api/devices/{id}/push_token`) — backend-triggered nudges.
