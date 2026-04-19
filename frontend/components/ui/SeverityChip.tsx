@@ -7,6 +7,26 @@ const SIZE_CLASS: Record<Size, string> = {
   md: "px-2.5 py-1 text-xs",
 };
 
+/** Dot sits on a same-hue tinted chip — avoid deep glow that washes the disk out. */
+function chipDotBoxShadow(severity: Severity, glow: string): string {
+  if (severity === "suggest_911") {
+    return `0 0 8px ${glow}`;
+  }
+  if (severity === "none") {
+    return "0 0 6px rgba(110,231,183,0.8), 0 0 0 1px rgba(255,255,255,0.14)";
+  }
+  if (severity === "patient_check") {
+    return "0 0 6px rgba(147,197,253,0.88), 0 0 0 1px rgba(255,255,255,0.15)";
+  }
+  if (severity === "nurse_alert") {
+    return "0 0 6px rgba(254,215,170,0.92), 0 0 0 1px rgba(255,255,255,0.14)";
+  }
+  if (severity === "caregiver_alert") {
+    return "0 0 6px rgba(253,224,71,0.55), 0 0 0 1px rgba(255,255,255,0.12)";
+  }
+  return `0 0 8px ${glow}`;
+}
+
 export function SeverityChip({
   severity,
   size = "md",
@@ -22,7 +42,6 @@ export function SeverityChip({
 }) {
   const meta = severityMeta(severity);
   const isCrit = severity === "suggest_911";
-  const isCheck = severity === "patient_check";
   return (
     <span
       className={
@@ -34,14 +53,9 @@ export function SeverityChip({
     >
       <span
         className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dotClass}`}
-        style={{
-          // Same-hue glow as the chip makes the dot disappear; use a lighter halo.
-          boxShadow: isCheck
-            ? "0 0 6px rgba(147,197,253,0.85), 0 0 0 1px rgba(255,255,255,0.15)"
-            : `0 0 8px ${meta.glow}`,
-        }}
+        style={{ boxShadow: chipDotBoxShadow(severity, meta.glow) }}
       />
-      <span>{label ?? meta.label}</span>
+      <span style={{ color: meta.color }}>{label ?? meta.label}</span>
     </span>
   );
 }

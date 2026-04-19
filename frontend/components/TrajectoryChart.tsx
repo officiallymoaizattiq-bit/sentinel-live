@@ -14,7 +14,6 @@ import {
   YAxis,
 } from "recharts";
 import {
-  deteriorationScoreBands,
   formatTrajectoryAxisLabel,
   scoreToSeverity,
   severityMeta,
@@ -132,7 +131,6 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const bands = deteriorationScoreBands();
   const last = points[points.length - 1];
   const strokeColor =
     last != null
@@ -147,22 +145,17 @@ export function TrajectoryChart({ points }: { points: TrajectoryPoint[] }) {
     <div className="h-[260px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={points} margin={{ top: 12, right: 8, left: 4, bottom: 8 }}>
+          <ReferenceArea
+            y1={0}
+            y2={1}
+            fill="rgba(30,41,59,0.45)"
+            stroke="none"
+          />
           <CartesianGrid
             strokeDasharray="3 6"
             stroke="rgba(148,163,184,0.08)"
             vertical={false}
           />
-
-          {bands.map((b) => (
-            <ReferenceArea
-              key={`${b.y0}-${b.y1}`}
-              y1={b.y0}
-              y2={b.y1}
-              fill={severityMeta(b.severity).color}
-              fillOpacity={0.07}
-              stroke="none"
-            />
-          ))}
           {[0.2, 0.4, 0.6, 0.8].map((y) => (
             <ReferenceLine
               key={y}

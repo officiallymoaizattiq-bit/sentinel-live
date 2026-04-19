@@ -1,21 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Call, CallRecord } from "@/lib/api";
 import { api } from "@/lib/api";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
 import { formatTrajectoryAxisLabel } from "@/lib/format";
 import { useEventStream } from "@/lib/hooks/useEventStream";
 import { CallLogCard } from "@/components/patient/CallLogCard";
+import { DeteriorationPatientPanel } from "@/components/patient/DeteriorationPatientPanel";
 import { Fake911Modal } from "@/components/patient/Fake911Modal";
 
-const WIDGET_SRC = "https://elevenlabs.io/convai-widget/index.js";
+/** Official embed (see ElevenLabs widget docs). Legacy elevenlabs.io URL often fails to register the element. */
+const WIDGET_SRC = "https://unpkg.com/@elevenlabs/convai-widget-embed";
+
+/** Convai web component instance (methods not in HTMLElement typings). */
+type ConvaiElement = HTMLElement & {
+  startConversation?: () => void;
+  endConversation?: () => void;
+};
 
 declare global {
   namespace JSX {
     interface IntrinsicElements {
       "elevenlabs-convai": React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & { "agent-id": string },
+        React.HTMLAttributes<HTMLElement> & {
+          "agent-id"?: string;
+          variant?: "compact" | "expanded";
+        },
         HTMLElement
       >;
     }
@@ -40,13 +51,44 @@ export function PatientLiveView({
     initialCalls?.[initialCalls.length - 1] ?? null
   );
   const [show911, setShow911] = useState(false);
+  const convaiRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (document.querySelector(`script[src="${WIDGET_SRC}"]`)) return;
+    const existing = document.querySelector(
+      `script[src^="${WIDGET_SRC}"],script[src*="convai-widget-embed"]`,
+    );
+    if (existing) return;
     const s = document.createElement("script");
-    s.src = WIDGET_SRC; s.async = true; s.type = "text/javascript";
+    s.src = WIDGET_SRC;
+    s.async = true;
+    s.type = "text/javascript";
     document.body.appendChild(s);
   }, []);
+
+  /** Mic / getUserMedia must run in the user-gesture stack — never after async gaps. */
+  const primeConvaiElement = () => {
+    const el = convaiRef.current as ConvaiElement | null;
+    if (!el || !agentId.trim()) return false;
+    el.setAttribute("agent-id", agentId.trim());
+    el.setAttribute("variant", "expanded");
+    return true;
+  };
+
+  const startVoiceFromUserGesture = () => {
+    if (!primeConvaiElement()) return;
+    const el = convaiRef.current as ConvaiElement | null;
+    try {
+      el?.startConversation?.();
+    } catch {
+      /* blocked or widget not ready */
+    }
+  };
+
+  /** When panel opens, keep attributes fresh (no async — gesture handled by Answer / Start button). */
+  useEffect(() => {
+    if (!widgetOpen || !agentId.trim()) return;
+    primeConvaiElement();
+  }, [widgetOpen, agentId]);
 
   useEffect(() => {
     if (!widgetOpen) { setSecondsLeft(null); return; }
@@ -114,19 +156,22 @@ export function PatientLiveView({
       setIncoming({ at: e.at, mode: e.mode });
     }
     if (e.type === "call_scored" && e.patient_id === patientId) {
-      api.calls(patientId).then(setCalls).catch(() => void 0);
+      api
+        .calls(patientId)
+        .then((next) => {
+          setCalls(next);
+          setLatestCall(next.length ? next[next.length - 1]! : null);
+        })
+        .catch(() => void 0);
     }
     if (e.type === "call_completed" && e.patient_id === patientId) {
-      setLatestCall((prev) => ({
-        ...((prev ?? {}) as Call),
-        id: e.call_id,
-        patient_id: e.patient_id,
-        outcome_label: e.outcome_label,
-        escalation_911: e.escalation_911,
-        summary_patient: e.summary_patient,
-        summary_nurse: e.summary_nurse,
-        summaries_generated_at: new Date().toISOString(),
-      } as Call));
+      api
+        .calls(patientId)
+        .then((next) => {
+          setCalls(next);
+          setLatestCall(next.length ? next[next.length - 1]! : null);
+        })
+        .catch(() => void 0);
       if (e.escalation_911) setShow911(true);
     }
   });
@@ -139,6 +184,8 @@ export function PatientLiveView({
       deterioration: c.score!.deterioration,
     }));
   const last = calls[calls.length - 1] ?? null;
+  const lastWithScore = [...calls].reverse().find((c) => c.score != null) ?? null;
+  const deterioration = lastWithScore?.score?.deterioration ?? null;
 
   return (
     <div className="mx-auto max-w-lg space-y-6 p-4">
@@ -154,8 +201,9 @@ export function PatientLiveView({
             {connected ? "● live" : "● connecting"}
           </span>
         </div>
-        <p className="text-sm text-slate-400">Your recent check-ins</p>
       </header>
+
+      <DeteriorationPatientPanel deterioration={deterioration} />
 
       {incoming && !widgetOpen && (
         <div className="rounded-2xl border border-emerald-400/40 bg-emerald-950/40 p-4">
@@ -167,12 +215,17 @@ export function PatientLiveView({
           </p>
           <div className="flex gap-2">
             <button
-              onClick={() => { setWidgetOpen(true); setIncoming(null); }}
+              type="button"
+              onClick={() => {
+                setIncoming(null);
+                setWidgetOpen(true);
+              }}
               className="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-black"
             >
               Answer
             </button>
             <button
+              type="button"
               onClick={() => setIncoming(null)}
               className="rounded-full border border-white/20 px-4 py-1.5 text-sm text-slate-300"
             >
@@ -182,40 +235,93 @@ export function PatientLiveView({
         </div>
       )}
 
-      {widgetOpen && agentId && (
+      {widgetOpen && (
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold">
-              Live check-in
-              {secondsLeft != null && (
-                <span className="ml-2 text-[11px] text-slate-400">
-                  auto-ends in {Math.max(0, secondsLeft)}s
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                id="demoSeverity"
-                defaultValue="none"
-                className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-200"
-              >
-                <option value="none">Fine</option>
-                <option value="nurse_alert">Schedule visit</option>
-                <option value="suggest_911">911</option>
-              </select>
+          {!agentId.trim() ? (
+            <div className="space-y-3 text-sm text-slate-300">
+              <p className="font-medium text-amber-200/90">
+                Voice check-in is not configured
+              </p>
+              <p className="text-xs leading-relaxed text-slate-400">
+                Set{" "}
+                <code className="rounded bg-black/30 px-1 py-0.5 text-[11px] text-slate-200">
+                  NEXT_PUBLIC_ELEVENLABS_AGENT_ID
+                </code>{" "}
+                in <code className="text-[11px]">frontend/.env.local</code> to your
+                public Conversational AI agent ID, then restart{" "}
+                <code className="text-[11px]">npm run dev</code>.
+              </p>
               <button
-                onClick={async () => {
-                  const sev = (document.getElementById("demoSeverity") as HTMLSelectElement)?.value;
-                  try { await api.widgetEndCall(patientId, sev); } catch {}
-                  setWidgetOpen(false);
-                }}
-                className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+                type="button"
+                onClick={() => setWidgetOpen(false)}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-200 hover:bg-white/5"
               >
-                End & summarize
+                Close
               </button>
             </div>
-          </div>
-          <elevenlabs-convai agent-id={agentId}></elevenlabs-convai>
+          ) : (
+            <>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">
+                  Live check-in
+                  {secondsLeft != null && (
+                    <span className="ml-2 text-[11px] text-slate-400">
+                      auto-ends in {Math.max(0, secondsLeft)}s
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    id="demoSeverity"
+                    defaultValue="none"
+                    className="rounded-md border border-white/10 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-200"
+                  >
+                    <option value="none">Fine</option>
+                    <option value="nurse_alert">Schedule visit</option>
+                    <option value="suggest_911">911</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const sev = (
+                        document.getElementById("demoSeverity") as HTMLSelectElement
+                      )?.value;
+                      try {
+                        await api.widgetEndCall(patientId, sev);
+                      } catch {
+                        /* */
+                      }
+                      setWidgetOpen(false);
+                    }}
+                    className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+                  >
+                    End & summarize
+                  </button>
+                </div>
+              </div>
+              <p className="mb-2 text-[11px] leading-relaxed text-slate-500">
+                Tap the button below to allow the microphone — browsers require a
+                direct tap (starting the call from code alone will not show the
+                mic prompt). If nothing happens, confirm this site is allowed in
+                the lock / mic icon in the address bar and that your ElevenLabs
+                agent allows this domain in its security allowlist.
+              </p>
+              <button
+                type="button"
+                onClick={startVoiceFromUserGesture}
+                className="mb-3 w-full rounded-xl bg-emerald-500/90 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-emerald-400"
+              >
+                Start voice check-in
+              </button>
+              <div className="relative min-h-[220px] w-full">
+                <elevenlabs-convai
+                  ref={convaiRef}
+                  variant="expanded"
+                  {...{ "agent-id": agentId.trim() }}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -237,7 +343,7 @@ export function PatientLiveView({
       )}
 
       <section>
-        <h2 className="mb-2 text-sm text-slate-400">Trend</h2>
+        <h2 className="mb-2 text-sm text-slate-400">Your Recent Check-In Trends</h2>
         <TrajectoryChart points={points} />
       </section>
 

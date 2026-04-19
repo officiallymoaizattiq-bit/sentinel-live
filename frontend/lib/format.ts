@@ -25,8 +25,8 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         rank: 4,
         color: "#F43F5E",
         glow: "rgba(244,63,94,0.55)",
-        dotClass: "bg-rose-500",
-        chipClass: "bg-rose-500/15 text-rose-200 ring-1 ring-inset ring-rose-400/40",
+        dotClass: "bg-rose-400 ring-1 ring-white/35",
+        chipClass: "bg-rose-500/15 ring-1 ring-inset ring-rose-400/50",
         ringClass: "ring-rose-400/60",
       };
     case "nurse_alert":
@@ -36,8 +36,8 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         rank: 3,
         color: "#FB923C",
         glow: "rgba(251,146,60,0.5)",
-        dotClass: "bg-orange-400",
-        chipClass: "bg-orange-500/15 text-orange-200 ring-1 ring-inset ring-orange-400/40",
+        dotClass: "bg-orange-400 ring-1 ring-white/35",
+        chipClass: "bg-orange-500/18 ring-1 ring-inset ring-orange-400/50",
         ringClass: "ring-orange-400/60",
       };
     case "caregiver_alert":
@@ -47,8 +47,8 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         rank: 2,
         color: "#FBBF24",
         glow: "rgba(251,191,36,0.5)",
-        dotClass: "bg-amber-400",
-        chipClass: "bg-amber-500/15 text-amber-200 ring-1 ring-inset ring-amber-400/40",
+        dotClass: "bg-amber-400 ring-1 ring-white/35",
+        chipClass: "bg-amber-500/18 ring-1 ring-inset ring-amber-400/50",
         ringClass: "ring-amber-400/60",
       };
     case "patient_check":
@@ -58,10 +58,8 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         rank: 1,
         color: "#3B82F6",
         glow: "rgba(59,130,246,0.55)",
-        // Lighter fill + ring reads like Stable’s emerald dot on a blue-tinted chip.
         dotClass: "bg-blue-400 ring-1 ring-white/35",
-        chipClass:
-          "bg-blue-500/20 text-blue-300 ring-1 ring-inset ring-blue-400/50",
+        chipClass: "bg-blue-500/20 ring-1 ring-inset ring-blue-400/55",
         ringClass: "ring-blue-400/60",
       };
     case "none":
@@ -72,8 +70,8 @@ export function severityMeta(s: string | null | undefined): SeverityMeta {
         rank: 0,
         color: "#34D399",
         glow: "rgba(52,211,153,0.45)",
-        dotClass: "bg-emerald-400",
-        chipClass: "bg-emerald-500/15 text-emerald-200 ring-1 ring-inset ring-emerald-400/40",
+        dotClass: "bg-emerald-400 ring-1 ring-white/30",
+        chipClass: "bg-emerald-500/15 ring-1 ring-inset ring-emerald-400/45",
         ringClass: "ring-emerald-400/60",
       };
   }
