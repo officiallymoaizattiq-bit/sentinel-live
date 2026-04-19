@@ -228,13 +228,16 @@ async def patient_vitals_binned(
     *,
     patient_id: str,
     hours: int,
-    buckets: int = 12,
+    buckets: int = 8,
 ) -> tuple[list[dict], dict[str, dict], dict[str, str]]:
     """Stream vitals in a **record-anchored** window and bin numeric kinds.
 
     Window: ``[latest_sample_time - hours, latest_sample_time]`` (any kind
-    sets the anchor). Up to ``buckets`` equal sub-intervals; one mean per
-    (kind, bucket) when that bucket has numeric samples.
+    sets the anchor). The window is split into ``buckets`` equal sub-intervals.
+    For each numeric kind that has at least one sample, returns **exactly**
+    ``buckets`` rows: bucket **mid** time as ``t``, mean ``value`` when samples
+    exist in that bucket, and JSON ``null`` for ``value`` when the bucket is empty
+    (so charts stay evenly spaced).
 
     Returns ``(points, latest_by_kind, anchor_meta)`` where ``anchor_meta``
     has ISO strings ``anchored_from`` and ``anchored_until``.
@@ -299,23 +302,46 @@ async def patient_vitals_binned(
             slot["source"] = d["source"]
             slot["clock_skew"] = bool(d.get("clock_skew", False))
 
-    points: list[dict] = []
-    for (kind, _bi), slot in sorted(acc.items(), key=lambda x: (x[0][0], x[0][1])):
-        n = slot["n"]
-        if n <= 0:
-            continue
-        avg = slot["sum"] / n
-        mt = slot["max_t"]
-        points.append(
-            _vital_public_row({
-                "t": mt,
-                "kind": kind,
-                "value": avg,
+    kinds_ordered = sorted({k for (k, _bi) in acc.keys()})
+    kind_meta: dict[str, dict[str, str]] = {}
+    for (kind, _bi), slot in acc.items():
+        if kind not in kind_meta:
+            kind_meta[kind] = {
                 "unit": slot["unit"],
                 "source": slot["source"],
-                "clock_skew": slot["clock_skew"],
-            })
-        )
+            }
+
+    points: list[dict] = []
+    for kind in kinds_ordered:
+        meta = kind_meta[kind]
+        for bi in range(buckets):
+            t_mid = cutoff + timedelta(seconds=(bi + 0.5) * bucket_sec)
+            key = (kind, bi)
+            if key in acc:
+                slot = acc[key]
+                n = slot["n"]
+                avg = slot["sum"] / n if n else None
+                points.append(
+                    _vital_public_row({
+                        "t": t_mid,
+                        "kind": kind,
+                        "value": avg,
+                        "unit": slot["unit"],
+                        "source": slot["source"],
+                        "clock_skew": slot["clock_skew"],
+                    })
+                )
+            else:
+                points.append(
+                    _vital_public_row({
+                        "t": t_mid,
+                        "kind": kind,
+                        "value": None,
+                        "unit": str(meta["unit"]),
+                        "source": str(meta["source"]),
+                        "clock_skew": False,
+                    })
+                )
 
     latest_out = {k: _vital_public_row(v) for k, v in latest_raw.items()}
     points.sort(key=lambda r: (r["kind"], r["t"]))
@@ -340,13 +366,15 @@ async def ensure_demo_clinician_vitals(db=None) -> None:
         "source": DEMO_CLINICIAN_VITALS_SOURCE,
     })
     now = datetime.now(tz=timezone.utc)
+    # Eight samples in the trailing hour (matches binned chart slots) so 1h/4h/24h
+    # windows all show a full HR curve for the demo patient.
+    cutoff = now - timedelta(hours=1)
+    bucket_sec = 3600.0 / 8
     times = [
-        now - timedelta(hours=20),
-        now - timedelta(hours=10),
-        now - timedelta(hours=1),
+        cutoff + timedelta(seconds=(bi + 0.5) * bucket_sec) for bi in range(8)
     ]
-    heart_rates = [72, 88, 78]
-    vo2_vals = [31.5, 34.2, 32.8]
+    heart_rates = [72, 74, 76, 78, 80, 78, 76, 74]
+    vo2_vals = [31.5, 32.0, 32.5, 33.0, 33.2, 32.8, 32.4, 32.0]
     base = {
         "patient_id": DEMO_CLINICIAN_VITALS_PID,
         "device_id": "demo_clinician_device",

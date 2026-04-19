@@ -15,13 +15,76 @@ import { Glass } from "@/components/ui/Glass";
 type Vital = {
   t: string;
   kind: string;
-  value: number | string;
+  value: number | string | null;
   unit: string;
   source: string;
   clock_skew: boolean;
 };
 
-type ChartPoint = { ts: number; label: string; value: number };
+/** Raw bucket from API (null = no sample in that bucket). */
+type ChartPointRaw = { ts: number; label: string; value: number | null };
+/** After gap-fill for drawing; `interpolated` = no real sample at this bucket. */
+type ChartPoint = {
+  ts: number;
+  label: string;
+  value: number;
+  interpolated: boolean;
+};
+
+/**
+ * Linear interpolation in time between measured points; leading/trailing nulls
+ * use the nearest measured value so the line spans the full window.
+ */
+function fillGapLinear(points: ChartPointRaw[]): ChartPoint[] {
+  const n = points.length;
+  if (n === 0) return [];
+  const orig = points.map((p) => p.value);
+  const filled: (number | null)[] = [...orig];
+
+  let firstKnown = -1;
+  let lastKnown = -1;
+  for (let i = 0; i < n; i++) {
+    if (orig[i] !== null) {
+      if (firstKnown < 0) firstKnown = i;
+      lastKnown = i;
+    }
+  }
+  if (firstKnown < 0) return [];
+
+  const vFirst = orig[firstKnown] as number;
+  const vLast = orig[lastKnown] as number;
+  for (let i = 0; i < firstKnown; i++) filled[i] = vFirst;
+  for (let i = lastKnown + 1; i < n; i++) filled[i] = vLast;
+
+  let i = 0;
+  while (i < n) {
+    if (filled[i] !== null) {
+      i++;
+      continue;
+    }
+    const j0 = i - 1;
+    let j1 = i;
+    while (j1 < n && filled[j1] === null) j1++;
+    const v0 = filled[j0] as number;
+    const v1 = filled[j1] as number;
+    const t0 = points[j0].ts;
+    const t1 = points[j1].ts;
+    const denom = t1 - t0;
+    for (let k = j0 + 1; k < j1; k++) {
+      const t = points[k].ts;
+      const alpha = denom === 0 ? 0 : (t - t0) / denom;
+      filled[k] = v0 + alpha * (v1 - v0);
+    }
+    i = j1;
+  }
+
+  return points.map((p, idx) => ({
+    ts: p.ts,
+    label: p.label,
+    value: filled[idx] as number,
+    interpolated: orig[idx] === null,
+  }));
+}
 
 const STROKE: Record<string, string> = {
   heart_rate: "#f87171",
@@ -68,9 +131,13 @@ function kindLabel(kind: string): string {
   }
 }
 
-function toChartPoints(vitals: Vital[], kind: string): ChartPoint[] {
+function toChartPointsRaw(vitals: Vital[], kind: string): ChartPointRaw[] {
   return vitals
-    .filter((v) => v.kind === kind && typeof v.value === "number")
+    .filter(
+      (v) =>
+        v.kind === kind &&
+        (typeof v.value === "number" || v.value === null),
+    )
     .map((v) => {
       const d = new Date(v.t);
       return {
@@ -81,7 +148,7 @@ function toChartPoints(vitals: Vital[], kind: string): ChartPoint[] {
           hour: "2-digit",
           minute: "2-digit",
         }),
-        value: v.value as number,
+        value: typeof v.value === "number" ? v.value : null,
       };
     })
     .sort((a, b) => a.ts - b.ts);
@@ -106,8 +173,9 @@ function latestNumeric(
 const selectClass =
   "w-full max-w-[220px] cursor-pointer appearance-none rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2.5 pr-10 text-sm text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition focus:border-accent-400/45 focus:outline-none scheme-dark";
 
-const WINDOW_HOURS = [1, 2, 8] as const;
-const BUCKETS = 12;
+const WINDOW_HOURS = [1, 4, 24] as const;
+/** Binned vitals: one mean per equal-width slice; same bucket count for 1h / 4h / 24h windows. */
+const VITAL_CHART_BUCKETS = 8;
 
 type WrappedVitalsPayload = {
   points: Vital[];
@@ -149,8 +217,13 @@ function VitalsTooltip({
         className="num mt-0.5 text-sm font-semibold text-white"
         style={{ color: payload[0].color }}
       >
-        {row.value}
+        {Math.round(row.value)}
       </div>
+      {row.interpolated ? (
+        <div className="mt-1 text-[10px] text-slate-500">
+          Estimated between readings (not a direct measurement)
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -162,7 +235,7 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
     Vital
   > | null>(null);
   const [windowHours, setWindowHours] =
-    useState<(typeof WINDOW_HOURS)[number]>(2);
+    useState<(typeof WINDOW_HOURS)[number]>(4);
   /** ISO time of newest sample used to anchor the window (record time, not "now"). */
   const [anchorUntilIso, setAnchorUntilIso] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -174,7 +247,7 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
       try {
         const params = new URLSearchParams({
           hours: String(windowHours),
-          max_points: String(BUCKETS),
+          max_points: String(VITAL_CHART_BUCKETS),
         });
         const r = await fetch(
           `/api/patients/${patientId}/vitals?${params.toString()}`,
@@ -218,7 +291,9 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
     if (!vitals) return [];
     const kinds = new Set<string>();
     for (const v of vitals) {
-      if (typeof v.value === "number") kinds.add(v.kind);
+      if (typeof v.value === "number" || v.value === null) {
+        kinds.add(v.kind);
+      }
     }
     if (latestByKind) {
       for (const [k, v] of Object.entries(latestByKind)) {
@@ -238,6 +313,11 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
       prev && numericKinds.includes(prev) ? prev : numericKinds[0]
     );
   }, [numericKinds]);
+
+  const series = useMemo(() => {
+    if (!vitals || !selectedKind) return [];
+    return fillGapLinear(toChartPointsRaw(vitals, selectedKind));
+  }, [vitals, selectedKind]);
 
   if (error) {
     return (
@@ -270,7 +350,6 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
     );
   }
 
-  const series = selectedKind ? toChartPoints(vitals, selectedKind) : [];
   const latest = selectedKind
     ? latestNumeric(vitals, selectedKind, latestByKind)
     : null;
@@ -285,9 +364,9 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
           </div>
           <div className="text-[11px] text-slate-400">
             Last {windowHours}h of recorded data (window ends at latest upload,
-            not the wall clock) · {BUCKETS}{" "}
-            equal buckets (~{Math.round((windowHours * 60) / BUCKETS)} min wide);
-            one dot per bucket that has samples
+            not the wall clock) · {VITAL_CHART_BUCKETS}{" "}
+            equal buckets (~{Math.round((windowHours * 60) / VITAL_CHART_BUCKETS)}{" "}
+            min wide); empty buckets use a straight-line estimate between real samples
           </div>
           {anchorUntilIso ? (
             <div className="mt-0.5 text-[10px] text-slate-500">
@@ -413,7 +492,23 @@ export function VitalsPanel({ patientId }: { patientId: string }) {
                 dataKey="value"
                 stroke={stroke}
                 strokeWidth={2}
-                dot={{ r: 3, fill: stroke, strokeWidth: 0 }}
+                dot={(props) => {
+                  const p = props.payload as ChartPoint | undefined;
+                  const r = p?.interpolated ? 2 : 3;
+                  const opacity = p?.interpolated ? 0.35 : 1;
+                  const { cx, cy } = props;
+                  if (cx == null || cy == null) return null;
+                  return (
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={r}
+                      fill={stroke}
+                      strokeWidth={0}
+                      opacity={opacity}
+                    />
+                  );
+                }}
                 activeDot={{ r: 5, stroke: stroke, strokeWidth: 2, fill: "#0f172a" }}
               />
             </LineChart>

@@ -2,7 +2,34 @@
 
 import { useState } from "react";
 
-export function CallNowButton({ patientId }: { patientId: string }) {
+const PILL_CLASS =
+  "rounded-full border border-emerald-500/40 bg-slate-950 px-3 py-1 text-xs font-medium text-emerald-200 shadow-sm hover:border-emerald-400/55 hover:bg-slate-900 disabled:opacity-50";
+
+const HERO_CLASS =
+  "inline-flex items-center gap-2 rounded-xl border border-accent-400/40 bg-gradient-to-r from-accent-500/30 to-accent-600/20 px-3.5 py-1.5 text-xs font-semibold text-white shadow-glow transition hover:from-accent-500/40 hover:to-accent-600/30 disabled:opacity-50";
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5">
+      <path
+        d="M6.6 10.8a15 15 0 006.6 6.6l2.2-2.2a1 1 0 011-.25 11.4 11.4 0 003.6.6 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1 11.4 11.4 0 00.6 3.6 1 1 0 01-.25 1l-2.25 2.2z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+export function CallNowButton({
+  patientId,
+  label = "Call now",
+  appearance = "pill",
+}: {
+  patientId: string;
+  /** Shown on the button when not busy (e.g. "Trigger call" on patient hero). */
+  label?: string;
+  /** `pill` = dashboard card footer; `hero` = patient overview accent button. */
+  appearance?: "pill" | "hero";
+}) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -29,18 +56,22 @@ export function CallNowButton({ patientId }: { patientId: string }) {
     }
   };
 
+  const btnClass = appearance === "hero" ? HERO_CLASS : PILL_CLASS;
+
   return (
     <div className="inline-flex shrink-0 flex-col items-end gap-1">
       <button
+        type="button"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           run();
         }}
         disabled={busy}
-        className="rounded-full border border-emerald-500/40 bg-slate-950 px-3 py-1 text-xs font-medium text-emerald-200 shadow-sm hover:border-emerald-400/55 hover:bg-slate-900 disabled:opacity-50"
+        className={btnClass}
       >
-        {busy ? "Calling…" : "Call now"}
+        {appearance === "hero" ? <PhoneIcon /> : null}
+        {busy ? "Calling…" : label}
       </button>
       {status && (
         <span className="text-[10px] text-slate-400">{status}</span>

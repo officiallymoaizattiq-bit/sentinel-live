@@ -454,8 +454,9 @@ async def patient_vitals(
         default=None,
         ge=1,
         le=48,
-        description="When set, return ~this many time buckets per numeric kind "
-        "(mean per bucket) plus latest row per kind.",
+        description="When set, split the window into this many equal time buckets "
+        "per numeric kind (mean per bucket) plus latest row per kind. "
+        "Clinician graph uses 8.",
     ),
 ):
     if max_points is not None:

@@ -151,10 +151,11 @@ async def test_patient_vitals_binned_caps_buckets_per_kind(db):
     points, latest, anchor = await vitals.patient_vitals_binned(
         patient_id="p1",
         hours=1,
-        buckets=12,
+        buckets=8,
     )
     hr = [p for p in points if p["kind"] == "heart_rate"]
-    assert len(hr) <= 12
+    assert len(hr) == 8
+    assert sum(1 for p in hr if p["value"] is not None) >= 1
     assert "heart_rate" in latest
     assert latest["heart_rate"]["kind"] == "heart_rate"
     assert "anchored_until" in anchor and "anchored_from" in anchor
@@ -196,10 +197,12 @@ async def test_patient_vitals_record_anchor_not_wall_clock(db):
         },
     ])
     points, latest, anchor = await vitals.patient_vitals_binned(
-        patient_id="p2", hours=1, buckets=12,
+        patient_id="p2", hours=1, buckets=8,
     )
     assert anchor["anchored_until"] == t_max.isoformat()
-    assert len([p for p in points if p["kind"] == "heart_rate"]) >= 1
+    hr_pts = [p for p in points if p["kind"] == "heart_rate"]
+    assert len(hr_pts) == 8
+    assert sum(1 for p in hr_pts if p["value"] is not None) >= 1
     assert latest["heart_rate"]["value"] == 79.0
 
 
@@ -220,7 +223,8 @@ async def test_patient_vitals_many_samples_one_bucket_one_point(db):
         })
     await db.vitals.insert_many(docs)
     points, _latest, _anchor = await vitals.patient_vitals_binned(
-        patient_id="p3", hours=1, buckets=12,
+        patient_id="p3", hours=1, buckets=8,
     )
     hr = [p for p in points if p["kind"] == "heart_rate"]
-    assert len(hr) == 1
+    assert len(hr) == 8
+    assert sum(1 for p in hr if p["value"] is not None) == 1

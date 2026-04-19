@@ -43,14 +43,14 @@ async def test_patient_vitals_max_points_returns_points_and_latest(
         for m in range(30)
     ])
     r = await client.get(
-        "/api/patients/pv1/vitals?hours=1&max_points=12",
+        "/api/patients/pv1/vitals?hours=1&max_points=8",
     )
     assert r.status_code == 200
     body = r.json()
     assert "points" in body and "latest" in body
     assert body.get("anchored_until") and body.get("anchored_from")
     hr_pts = [p for p in body["points"] if p["kind"] == "heart_rate"]
-    assert len(hr_pts) <= 12
+    assert len(hr_pts) == 8
     assert body["latest"]["heart_rate"]["kind"] == "heart_rate"
 
 

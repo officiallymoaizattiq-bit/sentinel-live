@@ -136,7 +136,7 @@ export default async function PatientDetail({
       </Glass>
 
       <section>
-        <h3 className="mb-2 text-sm text-slate-400">Wearable vitals (24h)</h3>
+        <h3 className="mb-2 text-sm text-slate-400">Wearable vitals</h3>
         <VitalsPanel patientId={params.id} />
       </section>
 

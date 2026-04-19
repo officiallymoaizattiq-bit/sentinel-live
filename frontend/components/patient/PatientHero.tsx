@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Patient } from "@/lib/api";
+import { CallNowButton } from "@/components/admin/CallNowButton";
 import { Glass } from "@/components/ui/Glass";
 import { SeverityChip } from "@/components/ui/SeverityChip";
 import {
@@ -130,19 +131,12 @@ export function PatientHero({
             <span className="num">{callsToday} today</span>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-xl border border-accent-400/40 bg-gradient-to-r from-accent-500/30 to-accent-600/20 px-3.5 py-1.5 text-xs font-semibold text-white shadow-glow transition hover:from-accent-500/40 hover:to-accent-600/30"
-            >
-              <svg viewBox="0 0 24 24" fill="none" className="h-3.5 w-3.5">
-                <path
-                  d="M6.6 10.8a15 15 0 006.6 6.6l2.2-2.2a1 1 0 011-.25 11.4 11.4 0 003.6.6 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1 11.4 11.4 0 00.6 3.6 1 1 0 01-.25 1l-2.25 2.2z"
-                  fill="currentColor"
-                />
-              </svg>
-              Trigger call
-            </button>
+          <div className="mt-5 flex flex-wrap items-start gap-2">
+            <CallNowButton
+              patientId={patient.id}
+              label="Trigger call"
+              appearance="hero"
+            />
             <button
               type="button"
               className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08]"
