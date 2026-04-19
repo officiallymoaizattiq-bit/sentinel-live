@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from twilio.twiml.voice_response import Gather, VoiceResponse
@@ -175,16 +178,28 @@ async def finalize_call(
 
     # Audio retrieval is best-effort; if SDK shape differs, skip features
     features = AudioFeatures()
+    tmp_path: Path | None = None
     try:
         audio_bytes = el.conversational_ai.conversations.audio.get(conversation_id)
         if audio_bytes:
-            tmp = f"/tmp/{conversation_id}.mp3"
-            with open(tmp, "wb") as fh:
-                fh.write(audio_bytes if isinstance(audio_bytes, (bytes, bytearray))
-                        else b"".join(audio_bytes))
-            features = extract_features(tmp)
+            raw = (
+                audio_bytes
+                if isinstance(audio_bytes, (bytes, bytearray))
+                else b"".join(audio_bytes)
+            )
+            if raw:
+                safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", conversation_id)[:200]
+                tmp_path = Path(tempfile.gettempdir()) / f"sentinel_{safe_id}.mp3"
+                tmp_path.write_bytes(raw)
+                features = extract_features(str(tmp_path))
     except Exception as e:
         log.warning("audio fetch failed: %s", e)
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     first = await db.calls.find({"patient_id": call_doc["patient_id"]}) \
                           .sort("called_at", 1).limit(1).to_list(1)

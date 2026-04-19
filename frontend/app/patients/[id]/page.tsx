@@ -95,9 +95,11 @@ export default async function PatientDetail({
         news2={lastScored?.score?.news2 ?? null}
         redFlags={lastScored?.score?.red_flags ?? []}
         severity={severity}
-        summary={lastScored?.score?.summary ?? null}
-        recommendedAction={lastScored?.score?.recommended_action ?? null}
       />
+
+      {lastFinalized && (
+        <CallLogCard call={lastFinalized} audience="nurse" />
+      )}
 
       <Glass className="overflow-hidden p-5">
         <div className="mb-3 flex items-center justify-between">
@@ -141,9 +143,6 @@ export default async function PatientDetail({
       </section>
 
       <div className="min-w-0 space-y-4">
-        {lastFinalized && (
-          <CallLogCard call={lastFinalized} audience="nurse" />
-        )}
         <CallTimeline calls={calls} />
       </div>
     </div>

@@ -16,9 +16,12 @@ function resolvedSummary(call: Call, audience: "patient" | "nurse"): string | nu
 export function CallLogCard({
   call,
   audience,
+  embedded = false,
 }: {
   call: Call;
   audience: "patient" | "nurse";
+  /** When true, omit outer Glass (e.g. nested inside another panel). */
+  embedded?: boolean;
 }) {
   const fromCall = useMemo(
     () => resolvedSummary(call, audience),
@@ -61,8 +64,8 @@ export function CallLogCard({
     }
   }
 
-  return (
-    <Glass className="overflow-hidden p-4">
+  const body = (
+    <>
       <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-slate-400">
         {audience === "patient" ? "Your check-in summary" : "Clinical summary"}
       </div>
@@ -120,6 +123,16 @@ export function CallLogCard({
           {busy ? "Regenerating…" : "Regenerate"}
         </button>
       )}
-    </Glass>
+    </>
   );
+
+  if (embedded) {
+    return (
+      <div className="overflow-hidden rounded-xl border border-white/10 bg-black/25 p-4">
+        {body}
+      </div>
+    );
+  }
+
+  return <Glass className="overflow-hidden p-4">{body}</Glass>;
 }
