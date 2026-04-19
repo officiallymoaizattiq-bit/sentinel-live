@@ -4,6 +4,7 @@ import { ActivityIndicator, AppState, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import { loadCredentials, type Credentials } from '../src/auth/storage';
+import { palette } from '../src/components/ui';
 import {
   configureIncomingCallNotifications,
   dismissIncomingCallNotification,
@@ -176,16 +177,38 @@ export default function RootLayout() {
   }, [ready, router]);
 
   if (!ready) {
+    // Paint the bootstrap splash with the same canvas colour the rest of
+    // the app uses, otherwise the user sees a white flash for the
+    // ~200ms it takes loadCredentials() to round-trip SecureStore.
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: palette.canvasFlat,
+        }}
+      >
+        <ActivityIndicator color={palette.accent400} />
       </View>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          // Default RN navigator container background is white. That bleeds
+          // through during route transitions, behind translucent status
+          // bars, and at the edges of any screen whose root <View> doesn't
+          // perfectly fill — which is exactly the white-vs-blue mismatch
+          // we see vs. the web canvas. Pin it to the same canvas colour
+          // every Screen uses so the whole app reads as one dark surface.
+          contentStyle: { backgroundColor: palette.canvasFlat },
+          animation: 'fade',
+        }}
+      />
     </SafeAreaProvider>
   );
 }
