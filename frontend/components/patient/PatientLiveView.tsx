@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { CallRecord } from "@/lib/api";
+import type { Call, CallRecord } from "@/lib/api";
 import { api } from "@/lib/api";
 import { TrajectoryChart } from "@/components/TrajectoryChart";
 import { useEventStream } from "@/lib/hooks/useEventStream";
+import { CallLogCard } from "@/components/patient/CallLogCard";
+import { Fake911Modal } from "@/components/patient/Fake911Modal";
 
 const WIDGET_SRC = "https://elevenlabs.io/convai-widget/index.js";
 
@@ -32,6 +34,10 @@ export function PatientLiveView({
   const [calls, setCalls] = useState<CallRecord[]>(initialCalls);
   const [incoming, setIncoming] = useState<{ at: string; mode: string } | null>(null);
   const [widgetOpen, setWidgetOpen] = useState(false);
+  const [latestCall, setLatestCall] = useState<Call | null>(
+    initialCalls?.[initialCalls.length - 1] ?? null
+  );
+  const [show911, setShow911] = useState(false);
 
   useEffect(() => {
     if (document.querySelector(`script[src="${WIDGET_SRC}"]`)) return;
@@ -46,6 +52,19 @@ export function PatientLiveView({
     }
     if (e.type === "call_scored" && e.patient_id === patientId) {
       api.calls(patientId).then(setCalls).catch(() => void 0);
+    }
+    if (e.type === "call_completed" && e.patient_id === patientId) {
+      setLatestCall((prev) => ({
+        ...((prev ?? {}) as Call),
+        id: e.call_id,
+        patient_id: e.patient_id,
+        outcome_label: e.outcome_label,
+        escalation_911: e.escalation_911,
+        summary_patient: e.summary_patient,
+        summary_nurse: e.summary_nurse,
+        summaries_generated_at: new Date().toISOString(),
+      } as Call));
+      if (e.escalation_911) setShow911(true);
     }
   });
 
@@ -135,6 +154,9 @@ export function PatientLiveView({
         <h2 className="mb-2 text-sm text-slate-400">Trend</h2>
         <TrajectoryChart points={points} />
       </section>
+
+      {latestCall && <CallLogCard call={latestCall} audience="patient" />}
+      {show911 && <Fake911Modal onAutoDismiss={() => setShow911(false)} />}
 
       <footer className="pt-4">
         <form action="/api/auth/logout" method="POST">

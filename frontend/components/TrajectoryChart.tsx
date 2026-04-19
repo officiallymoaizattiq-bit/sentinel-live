@@ -4,6 +4,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Customized,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -12,7 +13,13 @@ import {
   YAxis,
 } from "recharts";
 
-type Point = { t: string; deterioration: number };
+type Point = { t: string; deterioration: number; outcome_label?: string };
+
+const OUTCOME_COLOR: Record<string, string> = {
+  fine: "#34D399",
+  schedule_visit: "#FBBF24",
+  escalated_911: "#F43F5E",
+};
 
 function GlassTooltip({
   active,
@@ -44,6 +51,41 @@ function GlassTooltip({
         {v.toFixed(3)}
       </div>
     </div>
+  );
+}
+
+function OutcomeMarkers({
+  data,
+  xAxisMap,
+  yAxisMap,
+}: {
+  data?: Point[];
+  xAxisMap?: Record<string, { scale: (v: string) => number }>;
+  yAxisMap?: Record<string, { scale: (v: number) => number }>;
+}) {
+  if (!data || !xAxisMap || !yAxisMap) return null;
+  const xScale = Object.values(xAxisMap)[0]?.scale;
+  const yScale = Object.values(yAxisMap)[0]?.scale;
+  if (!xScale || !yScale) return null;
+  return (
+    <>
+      {data.map((p, i) => {
+        if (!p.outcome_label || !OUTCOME_COLOR[p.outcome_label]) return null;
+        const cx = xScale(p.t);
+        const cy = yScale(p.deterioration);
+        return (
+          <circle
+            key={i}
+            cx={cx}
+            cy={cy}
+            r={5}
+            fill={OUTCOME_COLOR[p.outcome_label]}
+            stroke="#0A0F1F"
+            strokeWidth={1.5}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -139,6 +181,7 @@ export function TrajectoryChart({ points }: { points: Point[] }) {
             }}
             isAnimationActive
           />
+          <Customized component={OutcomeMarkers} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
