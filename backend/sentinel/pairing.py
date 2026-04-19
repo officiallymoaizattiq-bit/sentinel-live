@@ -101,6 +101,59 @@ async def exchange_code(*, code: str, device_info: dict) -> dict:
     }
 
 
+async def demo_login(*, patient_id: str, passkey: str, device_info: dict) -> dict:
+    """Demo / hackathon shortcut. Mints a real signed device token for the
+    given patient when the caller knows the configured demo passkey, so the
+    mobile app can sync vitals to MongoDB without manually generating a
+    6-digit pairing code first.
+
+    Returns the same payload shape as `exchange_code` so the mobile client
+    can store it the same way. Inserts a fresh `devices` row each call —
+    re-logging in just allocates a new device id, which is harmless for a
+    demo session.
+    """
+    settings = get_settings()
+    if passkey != settings.mobile_demo_passkey:
+        raise HTTPException(401, {"error": "invalid_passkey"})
+
+    db = get_db()
+    if not isinstance(patient_id, str) or not patient_id:
+        raise HTTPException(400, {"error": "missing_patient_id"})
+
+    patient = await db.patients.find_one({"_id": patient_id})
+    if patient is None:
+        raise HTTPException(404, {"error": "unknown_patient"})
+
+    now = datetime.now(tz=timezone.utc)
+    device_id = str(uuid4())
+    token = issue_device_token(device_id=device_id, patient_id=patient_id)
+
+    await db.devices.insert_one({
+        "_id": device_id,
+        "patient_id": patient_id,
+        "token_hash": "",
+        "device_info": {
+            "model": device_info.get("model", ""),
+            "os": device_info.get("os", ""),
+            "app_version": device_info.get("app_version", ""),
+            "demo_login": True,
+        },
+        "created_at": now,
+        "last_seen_at": None,
+        "revoked_at": None,
+        "clock_skew_detected_at": None,
+        "clock_skew_severe": False,
+        "push_token": None,
+    })
+
+    return {
+        "device_token": token,
+        "patient_id": patient_id,
+        "device_id": device_id,
+        "pair_time": now.isoformat().replace("+00:00", "Z"),
+    }
+
+
 async def revoke_device(*, device_id: str) -> None:
     now = datetime.now(tz=timezone.utc)
     result = await get_db().devices.update_one(

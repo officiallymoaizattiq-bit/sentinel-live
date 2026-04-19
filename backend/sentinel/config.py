@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     admin_passkey: str = "a"
     patient_passkey: str = "b"
     session_secret: str = "dev-only-session-NOT-SECURE"
+    # Passkey accepted by the mobile demo-login endpoint. Lets a paired
+    # device skip the 6-digit code flow during hackathon demos / local
+    # development. Set to a random string in production to disable.
+    mobile_demo_passkey: str = "m"
 
 
 @lru_cache

@@ -216,6 +216,24 @@ async def pair_exchange(body: PairExchangeBody):
     return await pairing_mod.exchange_code(code=body.code, device_info=body.device_info)
 
 
+class MobileDemoLoginBody(_PM):
+    patient_id: str
+    passkey: str
+    device_info: dict[str, Any] = {}
+
+
+@router.post("/mobile/demo-login")
+async def mobile_demo_login(body: MobileDemoLoginBody):
+    """Mobile equivalent of the web /api/auth/login flow. Lets a demo user
+    skip the 6-digit pairing code by entering the configured passkey, and
+    receives a real signed device token so vitals uploads succeed."""
+    return await pairing_mod.demo_login(
+        patient_id=body.patient_id,
+        passkey=body.passkey,
+        device_info=body.device_info,
+    )
+
+
 @router.post("/devices/{device_id}/revoke", status_code=204)
 async def revoke_device_route(device_id: str = Path(...)):
     await pairing_mod.revoke_device(device_id=device_id)
